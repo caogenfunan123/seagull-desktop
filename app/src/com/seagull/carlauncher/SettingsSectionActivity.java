@@ -300,19 +300,41 @@ public class SettingsSectionActivity extends BaseActivity {
                 model.save(); render();
             });
         });
-        note("进菜园时画中画窗口藏起来，应用继续后台跑；主页键 / 返回键回桌面。菜园界面在后续版本接入。");
+        actionRow("进一次菜园看看", "看看现在的样子", v ->
+                startActivity(new Intent(this, GardenActivity.class)));
+        note("桌面底栏的「叶」长按进菜园，菜园里再长按一次出来；点叶子出全部应用。"
+                + "菜园的压暗跟外观里的背景遮罩是两份，互不影响。");
     }
 
     private void ballBody() {
-        toggleRow("显示小白点", model.ballEnabled, () -> { model.ballEnabled = !model.ballEnabled; });
-        sliderRow("大小", 32, 96, model.ballSize, " dp", v -> { model.ballSize = v; });
+        toggleRow("显示小白点", model.ballEnabled, () -> {
+            model.ballEnabled = !model.ballEnabled;
+            model.save();
+            if (model.ballEnabled && !Caps.canOverlay(this)) {
+                toast("还没给悬浮窗权限，先点下面那一行");
+            } else {
+                BallService.setEnabled(this, model.ballEnabled);
+            }
+            render();
+        });
         actionRow("悬浮窗权限", Caps.canOverlay(this) ? "已授权" : "未授权（点这里去开）", v -> {
             try {
                 startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                         Uri.parse("package:" + getPackageName())));
             } catch (Throwable ignore) {}
         });
-        note("不显示 Dock 时，野菜键变成悬浮键：默认在左下角，按住能拖到任何位置；点一下出全部应用，长按进出菜园。悬浮球本体在后续版本接入。");
+        sliderRow("大小", 32, 96, model.ballSize, " dp", v -> { model.ballSize = v; });
+        sliderRow("透明度", 20, 100, model.ballAlpha, " %", v -> { model.ballAlpha = v; });
+        actionRow("回到默认位置", model.ballX < 0 ? "已在左下角" : "重新贴边", v -> {
+            model.ballX = -1; model.ballY = -1;
+            model.save();
+            BallService.setEnabled(this, false);
+            if (model.ballEnabled) BallService.setEnabled(this, true);
+            render();
+        });
+        note("点一下回桌面，长按进菜园，直接拖能挪位置，松手自动贴边。"
+                + "Dock 关着时，点一下改成出全部应用。");
+        note("菜园里那片叶子跟悬浮球是同一个野菜键，位置大小共用。");
     }
 
     private void themeBody() {

@@ -287,6 +287,18 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         bottomBar.addView(gap(), new LinearLayout.LayoutParams(dp(8), 1));
         bottomBar.addView(barBtn("工具", R.color.warn,
                 v -> startActivity(new Intent(this, RootPanelActivity.class))), weight());
+        bottomBar.addView(gap(), new LinearLayout.LayoutParams(dp(8), 1));
+        // 野菜键：点=全部应用，长按=进菜园（长按超过 longPressMs 才算）
+        View leaf = barBtn("叶", R.color.leaf, v -> startActivity(new Intent(this, AppListActivity.class)));
+        leaf.setOnLongClickListener(v -> {
+            if (model != null && !model.gardenEnabled) {
+                toast("菜园已关：设置 → 桌面 → 菜园");
+                return true;
+            }
+            startActivity(new Intent(this, GardenActivity.class));
+            return true;
+        });
+        bottomBar.addView(leaf, weight());
     }
 
     private LinearLayout.LayoutParams weight() { return new LinearLayout.LayoutParams(0, -1, 1f); }

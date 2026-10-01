@@ -236,9 +236,10 @@ public final class LauncherModel {
     /* ==================== 状态：小白点 ==================== */
 
     public boolean ballEnabled = false;
-    public int ballX = 40;      // 位置记在本机
-    public int ballY = -1;      // -1 = 默认左下角
+    public int ballX = 40;      // 位置记在本机（-1 = 默认左下角）
+    public int ballY = -1;
     public int ballSize = 48;
+    public int ballAlpha = 90;  // 悬浮球透明度 20~100
 
     /* ==================== 状态：外观 ==================== */
 
@@ -773,6 +774,7 @@ public final class LauncherModel {
             o.put("ballX", ballX);
             o.put("ballY", ballY);
             o.put("ballSize", ballSize);
+            o.put("ballAlpha", ballAlpha);
             /* 外观 */
             o.put("theme", themeId);
             o.put("accent", customAccent);
@@ -949,6 +951,7 @@ public final class LauncherModel {
             ballX = o.optInt("ballX", 40);
             ballY = o.optInt("ballY", -1);
             ballSize = o.optInt("ballSize", 48);
+            ballAlpha = o.optInt("ballAlpha", 90);
 
             themeId = o.optString("theme", "leaf_shadow");
             customAccent = o.optString("accent", "");

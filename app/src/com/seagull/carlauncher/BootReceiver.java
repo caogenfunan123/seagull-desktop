@@ -32,5 +32,12 @@ public class BootReceiver extends BroadcastReceiver {
         } catch (Throwable t) {
             Log.w(TAG, "拉回桌面失败", t);
         }
+        // 悬浮球跟着开机自启（依赖 LauncherModel 里的 ballEnabled）
+        try {
+            LauncherModel m = new LauncherModel(ctx);
+            if (m.ballEnabled) BallService.setEnabled(ctx, true);
+        } catch (Throwable t) {
+            Log.w(TAG, "拉起悬浮球失败", t);
+        }
     }
 }
