@@ -84,7 +84,7 @@ public class DesktopView extends FrameLayout {
     }
 
     private void build() {
-        setBackgroundColor(getResources().getColor(R.color.ground, null));
+        setBackgroundColor(Skin.c(R.color.ground));
 
         mainCol = new LinearLayout(getContext());
         mainCol.setOrientation(LinearLayout.VERTICAL);
@@ -104,16 +104,16 @@ public class DesktopView extends FrameLayout {
         dockBar = new LinearLayout(getContext());
         dockBar.setOrientation(LinearLayout.HORIZONTAL);
         dockBar.setGravity(Gravity.CENTER);
-        dockBar.setBackgroundColor(getResources().getColor(R.color.panel, null));
+        dockBar.setBackgroundColor(Skin.c(R.color.panel));
         dockBar.setPadding(dp(4), dp(4), dp(4), dp(4));
         addView(dockBar, new FrameLayout.LayoutParams(-1, dp(76), Gravity.BOTTOM));
 
         // 自动收起的把手：贴在 Dock 所在的那条边
         dockHandle = new TextView(getContext());
         dockHandle.setTextSize(13);
-        dockHandle.setTextColor(getResources().getColor(R.color.text_dim, null));
+        dockHandle.setTextColor(Skin.c(R.color.text_dim));
         dockHandle.setGravity(Gravity.CENTER);
-        dockHandle.setBackgroundColor(getResources().getColor(R.color.panel, null));
+        dockHandle.setBackgroundColor(Skin.c(R.color.panel));
         dockHandle.setVisibility(GONE);
         dockHandle.setOnClickListener(v -> {
             dockCollapsed = false;
@@ -264,7 +264,7 @@ public class DesktopView extends FrameLayout {
         if (m.dockShowClock) {
             TextView clk = new TextView(getContext());
             clk.setText(SysOps.clockHHmm());
-            clk.setTextColor(getResources().getColor(R.color.text, null));
+            clk.setTextColor(Skin.c(R.color.text));
             clk.setTextSize(12);
             clk.setGravity(Gravity.CENTER);
             clk.setOnClickListener(v -> {
@@ -416,19 +416,19 @@ public class DesktopView extends FrameLayout {
         LinearLayout box = new LinearLayout(getContext());
         box.setOrientation(LinearLayout.VERTICAL);
         box.setGravity(Gravity.CENTER);
-        box.setBackgroundColor(getResources().getColor(R.color.panel, null));
+        box.setBackgroundColor(Skin.c(R.color.panel));
         box.setOnLongClickListener(v -> { widgetMenu(id); return true; });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1f);
         lp.setMargins(dp(4), 0, dp(4), 0);
         box.setLayoutParams(lp);
 
         TextView big = new TextView(getContext());
-        big.setTextColor(getResources().getColor(R.color.text, null));
+        big.setTextColor(Skin.c(R.color.text));
         big.setTextSize(id == 0 ? 30 : 17);
         big.setGravity(Gravity.CENTER);
 
         TextView small = new TextView(getContext());
-        small.setTextColor(getResources().getColor(R.color.text_dim, null));
+        small.setTextColor(Skin.c(R.color.text_dim));
         small.setTextSize(10);
         small.setGravity(Gravity.CENTER);
 
@@ -451,7 +451,7 @@ public class DesktopView extends FrameLayout {
         LinearLayout wrap = new LinearLayout(getContext());
         wrap.setOrientation(LinearLayout.VERTICAL);
         wrap.setGravity(Gravity.CENTER);
-        wrap.setBackgroundColor(getResources().getColor(R.color.panel, null));
+        wrap.setBackgroundColor(Skin.c(R.color.panel));
         wrap.setOnLongClickListener(v -> { widgetMenu(6); return true; });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1f);
         lp.setMargins(dp(4), 0, dp(4), 0);
@@ -482,7 +482,7 @@ public class DesktopView extends FrameLayout {
         if (label) {
             TextView tv = new TextView(getContext());
             tv.setText(a.label);
-            tv.setTextColor(getResources().getColor(R.color.text_dim, null));
+            tv.setTextColor(Skin.c(R.color.text_dim));
             tv.setTextSize(10);
             tv.setMaxLines(1);
             tv.setGravity(Gravity.CENTER);
@@ -492,11 +492,55 @@ public class DesktopView extends FrameLayout {
         box.setOnClickListener(v -> onAppTap(a, isDock));
         box.setOnLongClickListener(v -> {
             if (isDock) { dockMenu(a); return true; }
-            if (!editMode) { host.onToast("点右上角「编辑」后可拖动整理"); return true; }
-            startDrag(box, a.key());
+            if (editMode) { startDrag(box, a.key()); return true; }
+            appMenu(a);
             return true;
         });
         return box;
+    }
+
+    /**
+     * 长按桌面图标（非整理模式）：自己摆布局 —— 固定/拿下来 + 主屏里挪顺序。
+     * 拖拽压合在整理模式里做（避免误触），这里只管顺序与归属。
+     */
+    private void appMenu(final LauncherModel.App a) {
+        final LauncherModel m = model();
+        if (m == null) return;
+        boolean pinned = m.isPinned(a.key());
+        int idx = m.pinnedIndex(a.key());
+        List<String> opts = new ArrayList<>();
+        if (pinned) {
+            if (idx > 0) opts.add("主屏：上移一位");
+            if (idx >= 0 && idx < m.pinned.size() - 1) opts.add("主屏：下移一位");
+            if (idx > 0) opts.add("主屏：置顶");
+            opts.add("从主屏拿下来");
+            opts.add("固定到 Dock");
+        } else {
+            opts.add("固定到主屏");
+            opts.add("固定到 Dock");
+        }
+        opts.add("应用信息");
+        new AlertDialog.Builder(getContext())
+                .setTitle(a.label)
+                .setItems(opts.toArray(new String[0]), (d, which) -> {
+                    String o = opts.get(which);
+                    if (o.startsWith("主屏：上移")) m.movePinned(a.key(), -1);
+                    else if (o.startsWith("主屏：下移")) m.movePinned(a.key(), 1);
+                    else if (o.equals("主屏：置顶")) m.pinTop(a.key());
+                    else if (o.equals("从主屏拿下来")) m.unpin(a.key());
+                    else if (o.equals("固定到主屏")) m.pin(a.key());
+                    else if (o.equals("固定到 Dock")) { m.toggleDock(a.key()); host.onToast("已固定到 Dock"); }
+                    else {
+                        try {
+                            getContext().startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    android.net.Uri.parse("package:" + a.pkg)));
+                        } catch (Throwable t) { host.onToast("打不开应用信息"); }
+                        return;
+                    }
+                    refresh();
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     /** 点图标：Dock 上按「默认开在几号窗口」路由，桌面图标直接启动。 */
@@ -565,18 +609,33 @@ public class DesktopView extends FrameLayout {
 
         TextView tv = new TextView(getContext());
         tv.setText(f.name + " (" + f.keys.size() + ")");
-        tv.setTextColor(getResources().getColor(R.color.text_dim, null));
+        tv.setTextColor(Skin.c(R.color.text_dim));
         tv.setTextSize(10);
         tv.setMaxLines(1);
         box.addView(tv);
 
         box.setOnClickListener(v -> host.onOpenFolder(f));
         box.setOnLongClickListener(v -> {
-            if (!editMode) { host.onToast("点右上角「编辑」后可拖动整理"); return true; }
-            startDrag(box, box.getTag().toString());
+            if (editMode) { startDrag(box, box.getTag().toString()); return true; }
+            folderMenu(f);
             return true;
         });
         return box;
+    }
+
+    /** 长按文件夹（整理模式外）：改名 / 解散。 */
+    private void folderMenu(final LauncherModel.Folder f) {
+        final LauncherModel m = model();
+        if (m == null) return;
+        new AlertDialog.Builder(getContext())
+                .setTitle(f.name + "（" + f.keys.size() + "）")
+                .setItems(new String[]{"打开", "解散文件夹"}, (d, which) -> {
+                    if (which == 0) { host.onOpenFolder(f); return; }
+                    m.dissolveFolder(f);
+                    refresh();
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
     /* ==================== 拖拽压合 ==================== */

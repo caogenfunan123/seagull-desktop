@@ -31,7 +31,7 @@ import java.util.Locale;
  *
  * 每行副标题显示当前值摘要；点行进 SettingsSectionActivity（布局走现成 LayoutModeActivity）。
  */
-public class SettingsHubActivity extends Activity {
+public class SettingsHubActivity extends BaseActivity {
 
     private static final class Sec {
         final String id;
@@ -87,32 +87,32 @@ public class SettingsHubActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
-        col.setBackgroundColor(getColor(R.color.ground));
+        col.setBackgroundColor(Skin.c(R.color.ground));
         col.setPadding(dp(16), dp(12), dp(16), dp(24));
 
         LinearLayout head = new LinearLayout(this);
         head.setGravity(Gravity.CENTER_VERTICAL);
         TextView back = new TextView(this);
         back.setText("← 返回桌面");
-        back.setTextColor(getColor(R.color.leaf));
+        back.setTextColor(Skin.c(R.color.leaf));
         back.setTextSize(15);
         back.setOnClickListener(v -> finish());
         head.addView(back);
         TextView t = new TextView(this);
         t.setText("  设置");
-        t.setTextColor(getColor(R.color.text));
+        t.setTextColor(Skin.c(R.color.text));
         t.setTextSize(17);
         head.addView(t);
         col.addView(head);
 
         EditText search = new EditText(this);
         search.setHint("搜设置项或应用");
-        search.setHintTextColor(getColor(R.color.text_dim));
-        search.setTextColor(getColor(R.color.text));
+        search.setHintTextColor(Skin.c(R.color.text_dim));
+        search.setTextColor(Skin.c(R.color.text));
         search.setTextSize(14);
         search.setSingleLine(true);
         search.setPadding(dp(12), dp(10), dp(12), dp(10));
-        search.setBackgroundColor(getColor(R.color.card));
+        search.setBackgroundColor(Skin.c(R.color.card));
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
         sp.topMargin = dp(12);
         search.setLayoutParams(sp);
@@ -223,17 +223,17 @@ public class SettingsHubActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.VERTICAL);
         row.setPadding(dp(14), dp(12), dp(14), dp(12));
-        row.setBackgroundColor(getColor(R.color.card));
+        row.setBackgroundColor(Skin.c(R.color.card));
 
         TextView a = new TextView(this);
         a.setText(s.name);
-        a.setTextColor(getColor(R.color.text));
+        a.setTextColor(Skin.c(R.color.text));
         a.setTextSize(15);
         row.addView(a);
 
         TextView b = new TextView(this);
         b.setText(subtitle(s.id));
-        b.setTextColor(getColor(R.color.text_dim));
+        b.setTextColor(Skin.c(R.color.text_dim));
         b.setTextSize(12);
         row.addView(b);
 
@@ -249,7 +249,7 @@ public class SettingsHubActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(14), dp(10), dp(14), dp(10));
-        row.setBackgroundColor(getColor(R.color.card));
+        row.setBackgroundColor(Skin.c(R.color.card));
 
         ImageView iv = new ImageView(this);
         Drawable d = model.icon(a);
@@ -260,12 +260,12 @@ public class SettingsHubActivity extends Activity {
         txt.setOrientation(LinearLayout.VERTICAL);
         TextView name = new TextView(this);
         name.setText(a.label);
-        name.setTextColor(getColor(R.color.text));
+        name.setTextColor(Skin.c(R.color.text));
         name.setTextSize(14);
         txt.addView(name);
         TextView pkg = new TextView(this);
         pkg.setText(a.pkg);
-        pkg.setTextColor(getColor(R.color.text_dim));
+        pkg.setTextColor(Skin.c(R.color.text_dim));
         pkg.setTextSize(11);
         txt.addView(pkg);
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(0, -2, 1f);
@@ -292,7 +292,7 @@ public class SettingsHubActivity extends Activity {
     private void groupLabel(String s) {
         TextView tv = new TextView(this);
         tv.setText(s);
-        tv.setTextColor(getColor(R.color.leaf));
+        tv.setTextColor(Skin.c(R.color.leaf));
         tv.setTextSize(13);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-2, -2);
         p.topMargin = dp(16); p.bottomMargin = dp(8);
@@ -303,7 +303,7 @@ public class SettingsHubActivity extends Activity {
     private void note(String s) {
         TextView tv = new TextView(this);
         tv.setText(s);
-        tv.setTextColor(getColor(R.color.text_dim));
+        tv.setTextColor(Skin.c(R.color.text_dim));
         tv.setTextSize(13);
         tv.setPadding(dp(4), dp(20), dp(4), dp(4));
         listCol.addView(tv);

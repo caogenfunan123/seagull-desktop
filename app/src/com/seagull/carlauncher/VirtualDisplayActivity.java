@@ -17,7 +17,7 @@ import java.util.List;
  * L3 虚拟屏窗口控制台 —— 走完「建虚拟屏 → 把应用启上去 → 验证 → 切焦点」全流程，
  * 每一步的真实结果都在这里显示，失败就显示失败，不假装成功。
  */
-public class VirtualDisplayActivity extends Activity {
+public class VirtualDisplayActivity extends BaseActivity {
 
     private final VirtualDisplayHost host = new VirtualDisplayHost();
     private final StringBuilder buf = new StringBuilder();
@@ -46,19 +46,19 @@ public class VirtualDisplayActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
-        col.setBackgroundColor(getColor(R.color.ground));
+        col.setBackgroundColor(Skin.c(R.color.ground));
         col.setPadding(dp(20), dp(16), dp(20), dp(24));
 
         TextView back = new TextView(this);
         back.setText("← 返回桌面");
-        back.setTextColor(getColor(R.color.leaf));
+        back.setTextColor(Skin.c(R.color.leaf));
         back.setTextSize(16);
         back.setOnClickListener(v -> finish());
         col.addView(back);
 
         TextView t = new TextView(this);
         t.setText("L3 虚拟屏窗口");
-        t.setTextColor(getColor(R.color.text));
+        t.setTextColor(Skin.c(R.color.text));
         t.setTextSize(22);
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-2, -2);
         tp.topMargin = dp(8); tp.bottomMargin = dp(6);
@@ -66,15 +66,15 @@ public class VirtualDisplayActivity extends Activity {
 
         TextView sub = new TextView(this);
         sub.setText("把应用真正启动到虚拟屏上。与 L1 镜像不同，这里目标应用是活的、可交互的。");
-        sub.setTextColor(getColor(R.color.text_dim));
+        sub.setTextColor(Skin.c(R.color.text_dim));
         sub.setTextSize(12);
         col.addView(sub);
 
         state = new TextView(this);
-        state.setTextColor(getColor(R.color.leaf));
+        state.setTextColor(Skin.c(R.color.leaf));
         state.setTextSize(12);
         state.setTypeface(Typeface.MONOSPACE);
-        state.setBackgroundColor(getColor(R.color.panel));
+        state.setBackgroundColor(Skin.c(R.color.panel));
         state.setPadding(dp(12), dp(10), dp(12), dp(10));
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
         sp.topMargin = dp(12);
@@ -90,7 +90,7 @@ public class VirtualDisplayActivity extends Activity {
         col.addView(section("② 把应用启上去（选一个）"));
         TextView hint = new TextView(this);
         hint.setText("下面列的是已安装应用，点一下就用「应用自身权限」尝试 launch 到虚拟屏。");
-        hint.setTextColor(getColor(R.color.text_dim));
+        hint.setTextColor(Skin.c(R.color.text_dim));
         hint.setTextSize(11);
         col.addView(hint);
         addAppButtons(col);
@@ -138,14 +138,14 @@ public class VirtualDisplayActivity extends Activity {
                 + "本机 com.android.shell 持有 ADD_TRUSTED_DISPLAY（granted=true），\n"
                 + "所以第三步「root 代启」是这台机器上唯一不依赖平台签名就能把应用搬进虚拟屏的路子。\n"
                 + "要纯应用内实现，需要 uid=1000（装进 /system/priv-app）。");
-        why.setTextColor(getColor(R.color.text_dim));
+        why.setTextColor(Skin.c(R.color.text_dim));
         why.setTextSize(11);
         LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(-1, -2);
         wp.topMargin = dp(8);
         col.addView(why, wp);
 
         log = new TextView(this);
-        log.setTextColor(getColor(R.color.warn));
+        log.setTextColor(Skin.c(R.color.warn));
         log.setTextSize(11);
         log.setTypeface(Typeface.MONOSPACE);
         log.setPadding(0, dp(16), 0, 0);
@@ -171,7 +171,7 @@ public class VirtualDisplayActivity extends Activity {
     private TextView section(String s) {
         TextView tv = new TextView(this);
         tv.setText(s);
-        tv.setTextColor(getColor(R.color.leaf));
+        tv.setTextColor(Skin.c(R.color.leaf));
         tv.setTextSize(14);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-2, -2);
         p.topMargin = dp(20); p.bottomMargin = dp(8);
@@ -182,11 +182,11 @@ public class VirtualDisplayActivity extends Activity {
     private View btn(String label, Runnable r) {
         TextView tv = new TextView(this);
         tv.setText(label);
-        tv.setTextColor(getColor(R.color.text));
+        tv.setTextColor(Skin.c(R.color.text));
         tv.setTextSize(13);
         tv.setGravity(Gravity.CENTER_VERTICAL);
         tv.setPadding(dp(14), dp(12), dp(14), dp(12));
-        tv.setBackgroundColor(getColor(R.color.card));
+        tv.setBackgroundColor(Skin.c(R.color.card));
         tv.setOnClickListener(v -> new Thread(r).start());
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
         p.topMargin = dp(8);

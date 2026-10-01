@@ -35,7 +35,7 @@ import java.util.function.IntConsumer;
  * 各分区的完整功能落地节点：布局(已有) Dock(P0-5) 快捷栏(P0-6) 主题(P0-7) 菜园(P1-1)
  * 小白点(P1-2) 天气(P1-3) 歌词(P1-4) 任务引擎(P1-5) 野菜岛(P1-6) 触摸通道(P2-3)。
  */
-public class SettingsSectionActivity extends Activity {
+public class SettingsSectionActivity extends BaseActivity {
 
     public static final String EXTRA_SECTION = "section";
 
@@ -76,20 +76,20 @@ public class SettingsSectionActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
-        col.setBackgroundColor(getColor(R.color.ground));
+        col.setBackgroundColor(Skin.c(R.color.ground));
         col.setPadding(dp(16), dp(12), dp(16), dp(24));
 
         LinearLayout head = new LinearLayout(this);
         head.setGravity(Gravity.CENTER_VERTICAL);
         TextView back = new TextView(this);
         back.setText("← 返回设置");
-        back.setTextColor(getColor(R.color.leaf));
+        back.setTextColor(Skin.c(R.color.leaf));
         back.setTextSize(15);
         back.setOnClickListener(v -> finish());
         head.addView(back);
         TextView t = new TextView(this);
         t.setText("  " + titleOf(section));
-        t.setTextColor(getColor(R.color.text));
+        t.setTextColor(Skin.c(R.color.text));
         t.setTextSize(17);
         head.addView(t);
         col.addView(head);
@@ -352,9 +352,91 @@ public class SettingsSectionActivity extends Activity {
                 model.save(); render();
             });
         });
+        note("跟随系统 = 按本机时间切：06:00~19:00 浅色，其余深色。");
         sliderRow("全局字号", 50, 150, model.fontScale, " %", v -> { model.fontScale = v; });
         sliderRow("背景遮罩", 0, 100, model.wallDim, " %", v -> { model.wallDim = v; });
-        note("换成自己的壁纸后字看不清，就调背景遮罩。配色与壁纸的全局应用在后续版本接入。");
+        note("壁纸太亮就拉遮罩，文字颜色会跟着壁纸明暗自动翻色。");
+
+        sectionLabel("壁纸");
+        actionRow("白天壁纸", model.wallDay.isEmpty() ? "未设置" : model.wallDay, v -> pickWall(true));
+        actionRow("夜间壁纸", model.wallNight.isEmpty() ? "未设置" : model.wallNight, v -> pickWall(false));
+        actionRow("清空壁纸", "回到纯色底", v -> {
+            model.wallDay = ""; model.wallNight = "";
+            for (LauncherModel.Wall w : new ArrayList<>(model.wallLib)) model.removeWall(w);
+            model.save(); render();
+        });
+        sectionLabel("壁纸库（" + model.wallLib.size() + " / " + LauncherModel.WALL_LIB_MAX + "）");
+        if (model.wallLib.isEmpty()) {
+            note("还没有壁纸。点「白天壁纸」从相册选一张。");
+        } else {
+            for (LauncherModel.Wall w : new ArrayList<>(model.wallLib)) {
+                wallRow(w);
+            }
+        }
+        note("视频壁纸与毛玻璃（RenderEffect）依赖 API 29+ 特性与额外解码开销，"
+                + "公开版先只支持静态图；等有实测收益再加。");
+    }
+
+    private static final int REQ_WALL = 0x5A11;
+
+    private void pickWall(final boolean day) {
+        try {
+            startActivityForResult(Wallpaper.chooser(), REQ_WALL);
+            wallPickIsDay = day;
+        } catch (Throwable t) {
+            toast("这台设备没有相册选择器");
+        }
+    }
+
+    private boolean wallPickIsDay = true;
+
+    @Override protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req != REQ_WALL || data == null || data.getData() == null) return;
+        LauncherModel.Wall w = Wallpaper.onPicked(model, "", data.getData());
+        if (w == null) { render(); return; }
+        if (wallPickIsDay) model.useWall(w, false);
+        else model.useWall(w, true);
+        render();
+    }
+
+    private void wallRow(final LauncherModel.Wall w) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(14), dp(11), dp(14), dp(11));
+        row.setBackgroundColor(Skin.c(R.color.card));
+
+        TextView tv = new TextView(this);
+        tv.setText(w.name + (w.used ? "  · 正在用" : ""));
+        tv.setTextColor(Skin.c(R.color.text));
+        tv.setTextSize(13);
+        row.addView(tv, new LinearLayout.LayoutParams(0, -2, 1f));
+
+        TextView day = miniBtn("白天", v -> { model.useWall(w, false); render(); });
+        row.addView(day);
+        TextView night = miniBtn("夜间", v -> { model.useWall(w, true); render(); });
+        row.addView(night);
+        TextView del = miniBtn("删除", v -> {
+            model.removeWall(w);
+            render();
+        });
+        row.addView(del);
+
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
+        p.bottomMargin = dp(6);
+        row.setLayoutParams(p);
+        col.addView(row);
+    }
+
+    private TextView miniBtn(String label, View.OnClickListener l) {
+        TextView tv = new TextView(this);
+        tv.setText(label);
+        tv.setTextColor(Skin.c(R.color.leaf));
+        tv.setTextSize(12);
+        tv.setPadding(dp(8), dp(4), dp(8), dp(4));
+        tv.setOnClickListener(l);
+        return tv;
     }
 
     private void themeRow(String name, int accent, boolean on, Runnable pick) {
@@ -362,7 +444,7 @@ public class SettingsSectionActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(14), dp(11), dp(14), dp(11));
-        row.setBackgroundColor(on ? getColor(R.color.card) : getColor(R.color.panel));
+        row.setBackgroundColor(on ? Skin.c(R.color.card) : Skin.c(R.color.panel));
 
         View sw = new View(this);
         sw.setBackgroundColor(accent);
@@ -371,7 +453,7 @@ public class SettingsSectionActivity extends Activity {
 
         TextView tv = new TextView(this);
         tv.setText((on ? "  ● " : "  ○ ") + name);
-        tv.setTextColor(on ? getColor(R.color.leaf) : getColor(R.color.text));
+        tv.setTextColor(on ? Skin.c(R.color.leaf) : Skin.c(R.color.text));
         tv.setTextSize(14);
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(0, -2, 1f);
         tp.leftMargin = dp(6);
@@ -705,7 +787,7 @@ public class SettingsSectionActivity extends Activity {
     private void sectionLabel(String s) {
         TextView tv = new TextView(this);
         tv.setText(s);
-        tv.setTextColor(getColor(R.color.leaf));
+        tv.setTextColor(Skin.c(R.color.leaf));
         tv.setTextSize(13);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-2, -2);
         p.topMargin = dp(20); p.bottomMargin = dp(6);
@@ -716,7 +798,7 @@ public class SettingsSectionActivity extends Activity {
     private void note(String s) {
         TextView tv = new TextView(this);
         tv.setText(s);
-        tv.setTextColor(getColor(R.color.text_dim));
+        tv.setTextColor(Skin.c(R.color.text_dim));
         tv.setTextSize(12);
         tv.setPadding(dp(4), dp(10), dp(4), dp(4));
         col.addView(tv);
@@ -727,10 +809,10 @@ public class SettingsSectionActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(14), dp(12), dp(14), dp(12));
-        row.setBackgroundColor(on ? getColor(R.color.card) : getColor(R.color.panel));
+        row.setBackgroundColor(on ? Skin.c(R.color.card) : Skin.c(R.color.panel));
         TextView tv = new TextView(this);
         tv.setText((on ? "☑ " : "☐ ") + label);
-        tv.setTextColor(on ? getColor(R.color.leaf) : getColor(R.color.text));
+        tv.setTextColor(on ? Skin.c(R.color.leaf) : Skin.c(R.color.text));
         tv.setTextSize(14);
         row.addView(tv);
         row.setOnClickListener(v -> { flip.run(); model.save(); render(); });
@@ -748,18 +830,18 @@ public class SettingsSectionActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(14), dp(11), dp(14), dp(11));
-        box.setBackgroundColor(l == null ? getColor(R.color.panel) : getColor(R.color.card));
+        box.setBackgroundColor(l == null ? Skin.c(R.color.panel) : Skin.c(R.color.card));
 
         TextView a = new TextView(this);
         a.setText(title);
-        a.setTextColor(getColor(R.color.text));
+        a.setTextColor(Skin.c(R.color.text));
         a.setTextSize(14);
         box.addView(a);
 
         if (sub != null && !sub.isEmpty()) {
             TextView b = new TextView(this);
             b.setText(sub);
-            b.setTextColor(getColor(R.color.text_dim));
+            b.setTextColor(Skin.c(R.color.text_dim));
             b.setTextSize(12);
             box.addView(b);
         }
@@ -775,18 +857,18 @@ public class SettingsSectionActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(14), dp(10), dp(14), dp(12));
-        box.setBackgroundColor(getColor(R.color.card));
+        box.setBackgroundColor(Skin.c(R.color.card));
 
         LinearLayout top = new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);
         TextView name = new TextView(this);
         name.setText(label);
-        name.setTextColor(getColor(R.color.text));
+        name.setTextColor(Skin.c(R.color.text));
         name.setTextSize(14);
         top.addView(name, new LinearLayout.LayoutParams(0, -2, 1f));
         final TextView value = new TextView(this);
         value.setText((val) + unit);
-        value.setTextColor(getColor(R.color.leaf));
+        value.setTextColor(Skin.c(R.color.leaf));
         value.setTextSize(14);
         top.addView(value);
         box.addView(top);
@@ -830,7 +912,7 @@ public class SettingsSectionActivity extends Activity {
         EditText et = new EditText(this);
         et.setText(cur);
         et.setSelection(et.getText().length());
-        et.setTextColor(getColor(R.color.text));
+        et.setTextColor(Skin.c(R.color.text));
         new AlertDialog.Builder(this)
                 .setTitle(title)
                 .setView(et)
@@ -864,7 +946,7 @@ public class SettingsSectionActivity extends Activity {
             final LauncherModel.App a = model.allApps.get(i);
             TextView tv = new TextView(this);
             tv.setText(a.label + "\n" + a.pkg);
-            tv.setTextColor(getColor(R.color.text));
+            tv.setTextColor(Skin.c(R.color.text));
             tv.setTextSize(13);
             tv.setPadding(dp(16), dp(10), dp(16), dp(10));
             tv.setOnClickListener(v -> {

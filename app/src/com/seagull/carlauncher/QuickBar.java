@@ -124,14 +124,14 @@ public final class QuickBar {
         if (empty) {
             TextView plus = new TextView(ctx);
             plus.setText("+");
-            plus.setTextColor(ctx.getColor(R.color.text_dim));
+            plus.setTextColor(Skin.c(R.color.text_dim));
             plus.setTextSize(16);
             plus.setGravity(Gravity.CENTER);
             box.addView(plus, new LinearLayout.LayoutParams(-1, 0, 1f));
             if (label != null && !label.isEmpty()) {
                 TextView t = new TextView(ctx);
                 t.setText(label);
-                t.setTextColor(ctx.getColor(R.color.text_dim));
+                t.setTextColor(Skin.c(R.color.text_dim));
                 t.setTextSize(9);
                 t.setGravity(Gravity.CENTER);
                 box.addView(t);
@@ -145,7 +145,7 @@ public final class QuickBar {
         if (key.startsWith("@fn:")) {
             TextView t = new TextView(ctx);
             t.setText(key.substring(4).isEmpty() ? "" : fnLabel(key.substring(4)));
-            t.setTextColor(ctx.getColor(R.color.leaf));
+            t.setTextColor(Skin.c(R.color.leaf));
             t.setTextSize(10);
             t.setGravity(Gravity.CENTER);
             t.setMaxLines(2);
@@ -160,7 +160,7 @@ public final class QuickBar {
             if (a != null) {
                 TextView t = new TextView(ctx);
                 t.setText(a.label);
-                t.setTextColor(ctx.getColor(R.color.text_dim));
+                t.setTextColor(Skin.c(R.color.text_dim));
                 t.setTextSize(9);
                 t.setMaxLines(1);
                 box.addView(t);

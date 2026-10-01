@@ -17,7 +17,7 @@ import android.widget.Toast;
  * 对齐野菜桌面的「布局」（一个窗口占满/主副/三等分…）与「快捷栏」设置组。
  * 这里的"布局"作用于桌面自身的分区，不依赖任何特权 —— 公开版可完整交付。
  */
-public class LayoutModeActivity extends Activity {
+public class LayoutModeActivity extends BaseActivity {
 
     private LauncherModel model;
     private LinearLayout listCol;
@@ -37,20 +37,20 @@ public class LayoutModeActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
-        col.setBackgroundColor(getColor(R.color.ground));
+        col.setBackgroundColor(Skin.c(R.color.ground));
         col.setPadding(dp(16), dp(12), dp(16), dp(18));
 
         LinearLayout head = new LinearLayout(this);
         head.setGravity(Gravity.CENTER_VERTICAL);
         TextView back = new TextView(this);
         back.setText("← 返回桌面");
-        back.setTextColor(getColor(R.color.leaf));
+        back.setTextColor(Skin.c(R.color.leaf));
         back.setTextSize(15);
         back.setOnClickListener(v -> finish());
         head.addView(back);
         TextView t = new TextView(this);
         t.setText("  布局与组件");
-        t.setTextColor(getColor(R.color.text));
+        t.setTextColor(Skin.c(R.color.text));
         t.setTextSize(17);
         head.addView(t);
         col.addView(head);
@@ -117,11 +117,11 @@ public class LayoutModeActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(12), dp(13), dp(12), dp(13));
-        row.setBackgroundColor(on ? getColor(R.color.card) : getColor(R.color.panel));
+        row.setBackgroundColor(on ? Skin.c(R.color.card) : Skin.c(R.color.panel));
 
         TextView tv = new TextView(this);
         tv.setText((on ? "● " : "○ ") + m.label);
-        tv.setTextColor(on ? getColor(R.color.leaf) : getColor(R.color.text));
+        tv.setTextColor(on ? Skin.c(R.color.leaf) : Skin.c(R.color.text));
         tv.setTextSize(14);
         row.addView(tv, new LinearLayout.LayoutParams(0, -2, 1f));
 
@@ -144,10 +144,10 @@ public class LayoutModeActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(12), dp(12), dp(12), dp(12));
-        row.setBackgroundColor(on ? getColor(R.color.card) : getColor(R.color.panel));
+        row.setBackgroundColor(on ? Skin.c(R.color.card) : Skin.c(R.color.panel));
         TextView tv = new TextView(this);
         tv.setText((on ? "☑ " : "☐ ") + names[id]);
-        tv.setTextColor(on ? getColor(R.color.leaf) : getColor(R.color.text));
+        tv.setTextColor(on ? Skin.c(R.color.leaf) : Skin.c(R.color.text));
         tv.setTextSize(14);
         row.addView(tv);
         row.setOnClickListener(v -> {
@@ -165,10 +165,10 @@ public class LayoutModeActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(12), dp(12), dp(12), dp(12));
-        row.setBackgroundColor(on ? getColor(R.color.card) : getColor(R.color.panel));
+        row.setBackgroundColor(on ? Skin.c(R.color.card) : Skin.c(R.color.panel));
         TextView tv = new TextView(this);
         tv.setText((on ? "☑ " : "☐ ") + label);
-        tv.setTextColor(on ? getColor(R.color.leaf) : getColor(R.color.text));
+        tv.setTextColor(on ? Skin.c(R.color.leaf) : Skin.c(R.color.text));
         tv.setTextSize(14);
         row.addView(tv);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
@@ -181,11 +181,11 @@ public class LayoutModeActivity extends Activity {
     private View btn(String label, View.OnClickListener l) {
         TextView tv = new TextView(this);
         tv.setText(label);
-        tv.setTextColor(getColor(R.color.text));
+        tv.setTextColor(Skin.c(R.color.text));
         tv.setTextSize(14);
         tv.setGravity(Gravity.CENTER);
         tv.setPadding(dp(10), dp(13), dp(10), dp(13));
-        tv.setBackgroundColor(getColor(R.color.card));
+        tv.setBackgroundColor(Skin.c(R.color.card));
         tv.setOnClickListener(l);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
         p.topMargin = dp(8);
@@ -196,7 +196,7 @@ public class LayoutModeActivity extends Activity {
     private TextView section(String s) {
         TextView tv = new TextView(this);
         tv.setText(s);
-        tv.setTextColor(getColor(R.color.leaf));
+        tv.setTextColor(Skin.c(R.color.leaf));
         tv.setTextSize(13);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-2, -2);
         p.topMargin = dp(20); p.bottomMargin = dp(6);

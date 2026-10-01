@@ -35,7 +35,7 @@ import java.util.List;
  *         → getMediaProjection(resultCode, data)
  *            → createVirtualDisplay(...)   ← 早于任何一步都会抛 SecurityException
  */
-public class MirrorActivity extends Activity {
+public class MirrorActivity extends BaseActivity {
 
     private static final String TAG = "SeagullMirrorAct";
     private static final int REQ_CONSENT = 0x5EA4;
@@ -115,29 +115,29 @@ public class MirrorActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         rootCol = new LinearLayout(this);
         rootCol.setOrientation(LinearLayout.VERTICAL);
-        rootCol.setBackgroundColor(getColor(R.color.ground));
+        rootCol.setBackgroundColor(Skin.c(R.color.ground));
         rootCol.setPadding(dp(16), dp(12), dp(16), dp(16));
 
         LinearLayout head = new LinearLayout(this);
         head.setGravity(Gravity.CENTER_VERTICAL);
         TextView back = new TextView(this);
         back.setText("← 返回桌面");
-        back.setTextColor(getColor(R.color.leaf));
+        back.setTextColor(Skin.c(R.color.leaf));
         back.setTextSize(15);
         back.setOnClickListener(v -> finish());
         head.addView(back);
         TextView t = new TextView(this);
         t.setText("  L3 镜像小窗（应用真进虚拟屏）");
-        t.setTextColor(getColor(R.color.text));
+        t.setTextColor(Skin.c(R.color.text));
         t.setTextSize(17);
         head.addView(t);
         rootCol.addView(head);
 
         diag = new TextView(this);
-        diag.setTextColor(getColor(R.color.text_dim));
+        diag.setTextColor(Skin.c(R.color.text_dim));
         diag.setTextSize(11);
         diag.setTypeface(Typeface.MONOSPACE);
-        diag.setBackgroundColor(getColor(R.color.panel));
+        diag.setBackgroundColor(Skin.c(R.color.panel));
         diag.setPadding(dp(10), dp(8), dp(10), dp(8));
         LinearLayout.LayoutParams dpt = new LinearLayout.LayoutParams(-1, -2);
         dpt.topMargin = dp(8);
@@ -179,7 +179,7 @@ public class MirrorActivity extends Activity {
                 + "· 搬应用：root `am start --display <id> -f 0x18000000 -n <组件>`\n"
                 + "· 触摸：root `input -d <id> tap|swipe`（位移≥10px 判滑动，时长夹 50~2000ms）\n"
                 + "· 已知限制：被镜像应用自身若调用 startActivity 跳主屏，会跳回 display 0（音乐类应用常见）");
-        note.setTextColor(getColor(R.color.text_dim));
+        note.setTextColor(Skin.c(R.color.text_dim));
         note.setTextSize(10);
         LinearLayout.LayoutParams np = new LinearLayout.LayoutParams(-1, -2);
         np.topMargin = dp(14);
@@ -226,7 +226,7 @@ public class MirrorActivity extends Activity {
     private TextView waitLabel(String text) {
         TextView tv = new TextView(this);
         tv.setText(text);
-        tv.setTextColor(getColor(R.color.text_dim));
+        tv.setTextColor(Skin.c(R.color.text_dim));
         tv.setTextSize(12);
         tv.setGravity(Gravity.CENTER);
         tv.setBackgroundColor(0x80000000);
@@ -236,7 +236,7 @@ public class MirrorActivity extends Activity {
     private TextView section(String s) {
         TextView tv = new TextView(this);
         tv.setText(s);
-        tv.setTextColor(getColor(R.color.leaf));
+        tv.setTextColor(Skin.c(R.color.leaf));
         tv.setTextSize(13);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-2, -2);
         p.topMargin = dp(18); p.bottomMargin = dp(4);
@@ -247,10 +247,10 @@ public class MirrorActivity extends Activity {
     private View btn(String label, View.OnClickListener l) {
         TextView tv = new TextView(this);
         tv.setText(label);
-        tv.setTextColor(getColor(R.color.text));
+        tv.setTextColor(Skin.c(R.color.text));
         tv.setTextSize(13);
         tv.setPadding(dp(12), dp(11), dp(12), dp(11));
-        tv.setBackgroundColor(getColor(R.color.card));
+        tv.setBackgroundColor(Skin.c(R.color.card));
         tv.setOnClickListener(l);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
         p.topMargin = dp(7);
@@ -395,12 +395,12 @@ public class MirrorActivity extends Activity {
         List<HomeActivity.AppEntry> apps = HomeActivity.loadApps(this);
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
-        col.setBackgroundColor(getColor(R.color.ground));
+        col.setBackgroundColor(Skin.c(R.color.ground));
         col.setPadding(dp(16), dp(14), dp(16), dp(16));
 
         pickerTitle = new TextView(this);
         pickerTitle.setText("给槽 " + (which == 1 ? "A" : "B") + " 选一个应用（共 " + apps.size() + " 个）");
-        pickerTitle.setTextColor(getColor(R.color.text));
+        pickerTitle.setTextColor(Skin.c(R.color.text));
         pickerTitle.setTextSize(16);
         col.addView(pickerTitle);
         pickerBox = col;
@@ -408,10 +408,10 @@ public class MirrorActivity extends Activity {
         for (HomeActivity.AppEntry e : apps) {
             TextView tv = new TextView(this);
             tv.setText(e.label + "   " + e.pkg);
-            tv.setTextColor(getColor(R.color.text));
+            tv.setTextColor(Skin.c(R.color.text));
             tv.setTextSize(13);
             tv.setPadding(dp(12), dp(10), dp(12), dp(10));
-            tv.setBackgroundColor(getColor(R.color.card));
+            tv.setBackgroundColor(Skin.c(R.color.card));
             LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
             p.topMargin = dp(6);
             tv.setLayoutParams(p);

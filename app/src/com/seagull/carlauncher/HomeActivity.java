@@ -35,7 +35,7 @@ import java.util.List;
  * 全部公开 API：不需要 root、不需要任何签名权限，装到 Android 29+ 设备即可当桌面使用。
  * 静态 API（PREFS / AppEntry / loadApps / pinStatic）被另外 5 个文件依赖，保持兼容不变。
  */
-public class HomeActivity extends Activity implements DesktopView.Host {
+public class HomeActivity extends BaseActivity implements DesktopView.Host {
 
     public static final String PREFS = "seagull";
 
@@ -46,11 +46,13 @@ public class HomeActivity extends Activity implements DesktopView.Host {
     private DesktopView desktop;
     private LinearLayout topBar, bottomBar, mainCol;
     private TextView pipBox;
+    private String lastSkin = "";
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         model = new LauncherModel(this);
+        lastSkin = skinSignature();
         selfReport();
         setContentView(buildUi());
         buildTopBar();
@@ -86,7 +88,18 @@ public class HomeActivity extends Activity implements DesktopView.Host {
 
     @Override protected void onResume() {
         super.onResume();
-        if (desktop != null) {
+        // 从设置页 / 壁纸选择回来：配置变了就整屏重画一次
+        model.load();
+        String sig = skinSignature();
+        if (!sig.equals(lastSkin)) {
+            lastSkin = sig;
+            Skin.apply(model);
+            model.loadApps();
+            setContentView(buildUi());
+            buildTopBar();
+            buildBottomBar();
+            if (desktop != null) desktop.refresh();
+        } else if (desktop != null) {
             desktop.refresh();
             buildTopBar();
         }
@@ -95,6 +108,14 @@ public class HomeActivity extends Activity implements DesktopView.Host {
         } else {
             getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         }
+    }
+
+    /** 主题 / 壁纸 / 字号变了才重画，避免每次回桌面都闪一下。 */
+    private String skinSignature() {
+        if (model == null) return "";
+        return model.themeId + "|" + model.customAccent + "|" + model.dayNight
+                + "|" + model.wallDay + "|" + model.wallNight + "|" + model.wallDim
+                + "|" + model.fontScale + "|" + SysOps.clockHHmm().substring(0, 2);
     }
 
     @Override protected void onDestroy() {
@@ -119,7 +140,7 @@ public class HomeActivity extends Activity implements DesktopView.Host {
 
     private View buildUi() {
         FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(getColor(R.color.ground));
+        applyWallpaper(root);
 
         mainCol = new LinearLayout(this);
         mainCol.setOrientation(LinearLayout.VERTICAL);
@@ -128,7 +149,7 @@ public class HomeActivity extends Activity implements DesktopView.Host {
         topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
-        topBar.setBackgroundColor(getColor(R.color.panel));
+        topBar.setBackgroundColor(Skin.bar(R.color.panel));
         topBar.setPadding(dp(14), dp(10), dp(14), dp(10));
         mainCol.addView(topBar, new LinearLayout.LayoutParams(-1, dp(58)));
 
@@ -138,21 +159,53 @@ public class HomeActivity extends Activity implements DesktopView.Host {
         bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
         bottomBar.setGravity(Gravity.CENTER);
-        bottomBar.setBackgroundColor(getColor(R.color.panel));
+        bottomBar.setBackgroundColor(Skin.bar(R.color.panel));
         bottomBar.setPadding(dp(10), dp(8), dp(10), dp(8));
         mainCol.addView(bottomBar, new LinearLayout.LayoutParams(-1, dp(62)));
 
         // 画中画形态下的精简视图（系统 PiP 里只显示这一层）
         pipBox = new TextView(this);
         pipBox.setText("海鸥桌面 · 画中画");
-        pipBox.setTextColor(getColor(R.color.leaf));
+        pipBox.setTextColor(Skin.c(R.color.leaf));
         pipBox.setTextSize(14);
         pipBox.setGravity(Gravity.CENTER);
-        pipBox.setBackgroundColor(getColor(R.color.ground));
+        pipBox.setBackgroundColor(Skin.c(R.color.ground));
         pipBox.setVisibility(View.GONE);
         root.addView(pipBox, new FrameLayout.LayoutParams(-1, -1));
 
         return root;
+    }
+
+    /**
+     * 壁纸铺底 + 背景遮罩（TODO P0-7）。
+     * 遮罩层加在 root 的最底层，mainCol 透明，就能透出壁纸。
+     */
+    private void applyWallpaper(FrameLayout root) {
+        int w = getResources().getDisplayMetrics().widthPixels;
+        int h = getResources().getDisplayMetrics().heightPixels;
+        String path = currentWallPath();
+        android.graphics.Bitmap bmp = Wallpaper.loadForScreen(this, path, w, h);
+        if (bmp == null) {
+            root.setBackgroundColor(Skin.c(R.color.ground));
+            return;
+        }
+        android.graphics.drawable.BitmapDrawable bd =
+                new android.graphics.drawable.BitmapDrawable(getResources(), bmp);
+        bd.setGravity(Gravity.FILL);
+        root.setBackground(bd);
+        if (model.wallDim > 0) {
+            View dim = new View(this);
+            dim.setBackgroundColor((model.wallDim * 255 / 100) << 24);
+            dim.setClickable(true);      // 挡住壁纸，防止穿透点击
+            root.addView(dim, new FrameLayout.LayoutParams(-1, -1));
+        }
+    }
+
+    /** 当前该用哪张：浅色用白天图，深色优先夜间图。 */
+    private String currentWallPath() {
+        if (model == null) return "";
+        if (Skin.isLight(model)) return model.wallDay;
+        return model.wallNight.isEmpty() ? model.wallDay : model.wallNight;
     }
 
     private void buildTopBar() {
@@ -161,13 +214,13 @@ public class HomeActivity extends Activity implements DesktopView.Host {
 
         TextView clock = new TextView(this);
         clock.setText(SysOps.clockHHmm());
-        clock.setTextColor(getColor(R.color.text));
+        clock.setTextColor(Skin.c(R.color.text));
         clock.setTextSize(20);
         topBar.addView(clock);
 
         TextView date = new TextView(this);
         date.setText("   " + SysOps.dateCn());
-        date.setTextColor(getColor(R.color.text_dim));
+        date.setTextColor(Skin.c(R.color.text_dim));
         date.setTextSize(12);
         topBar.addView(date);
 
@@ -177,10 +230,10 @@ public class HomeActivity extends Activity implements DesktopView.Host {
         boolean editing = desktop != null && desktop.editMode;
         TextView edit = new TextView(this);
         edit.setText(editing ? "✓ 完成" : "整理");
-        edit.setTextColor(editing ? getColor(R.color.leaf) : getColor(R.color.text));
+        edit.setTextColor(editing ? Skin.c(R.color.leaf) : Skin.c(R.color.text));
         edit.setTextSize(13);
         edit.setPadding(dp(12), dp(7), dp(12), dp(7));
-        edit.setBackgroundColor(getColor(R.color.card));
+        edit.setBackgroundColor(Skin.c(R.color.card));
         edit.setOnClickListener(v -> {
             desktop.editMode = !desktop.editMode;
             buildTopBar();
@@ -192,10 +245,10 @@ public class HomeActivity extends Activity implements DesktopView.Host {
 
         TextView search = new TextView(this);
         search.setText("搜索");
-        search.setTextColor(getColor(R.color.text));
+        search.setTextColor(Skin.c(R.color.text));
         search.setTextSize(13);
         search.setPadding(dp(12), dp(7), dp(12), dp(7));
-        search.setBackgroundColor(getColor(R.color.card));
+        search.setBackgroundColor(Skin.c(R.color.card));
         LinearLayout.LayoutParams scp = new LinearLayout.LayoutParams(-2, -2);
         scp.leftMargin = dp(8);
         search.setLayoutParams(scp);
@@ -204,10 +257,10 @@ public class HomeActivity extends Activity implements DesktopView.Host {
 
         TextView set = new TextView(this);
         set.setText("设置");
-        set.setTextColor(getColor(R.color.text));
+        set.setTextColor(Skin.c(R.color.text));
         set.setTextSize(13);
         set.setPadding(dp(12), dp(7), dp(12), dp(7));
-        set.setBackgroundColor(getColor(R.color.card));
+        set.setBackgroundColor(Skin.c(R.color.card));
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-2, -2);
         sp.leftMargin = dp(8);
         set.setLayoutParams(sp);
@@ -238,10 +291,10 @@ public class HomeActivity extends Activity implements DesktopView.Host {
     private View barBtn(String label, int colorRes, View.OnClickListener l) {
         TextView tv = new TextView(this);
         tv.setText(label);
-        tv.setTextColor(getColor(colorRes));
+        tv.setTextColor(Skin.c(colorRes));
         tv.setTextSize(13);
         tv.setGravity(Gravity.CENTER);
-        tv.setBackgroundColor(getColor(R.color.card));
+        tv.setBackgroundColor(Skin.c(R.color.card));
         tv.setOnClickListener(l);
         return tv;
     }

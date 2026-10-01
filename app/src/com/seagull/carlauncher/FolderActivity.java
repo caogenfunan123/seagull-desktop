@@ -19,7 +19,7 @@ import android.widget.Toast;
  * 文件夹：打开查看 / 改名 / 解散 / 把某个应用移出。
  * 对齐野菜桌面「桌面」组里的整理能力。
  */
-public class FolderActivity extends Activity {
+public class FolderActivity extends BaseActivity {
 
     public static final String EXTRA_NAME = "folder_name";
 
@@ -50,7 +50,7 @@ public class FolderActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         rootCol = new LinearLayout(this);
         rootCol.setOrientation(LinearLayout.VERTICAL);
-        rootCol.setBackgroundColor(getColor(R.color.ground));
+        rootCol.setBackgroundColor(Skin.c(R.color.ground));
         rootCol.setPadding(dp(16), dp(12), dp(16), dp(16));
 
         LauncherModel.Folder f = folder();
@@ -60,13 +60,13 @@ public class FolderActivity extends Activity {
         head.setGravity(Gravity.CENTER_VERTICAL);
         TextView back = new TextView(this);
         back.setText("← 返回");
-        back.setTextColor(getColor(R.color.leaf));
+        back.setTextColor(Skin.c(R.color.leaf));
         back.setTextSize(15);
         back.setOnClickListener(v -> finish());
         head.addView(back);
         TextView t = new TextView(this);
         t.setText("  " + title + (f == null ? "" : "  共 " + f.keys.size() + " 个"));
-        t.setTextColor(getColor(R.color.text));
+        t.setTextColor(Skin.c(R.color.text));
         t.setTextSize(17);
         head.addView(t);
         rootCol.addView(head);
@@ -103,7 +103,7 @@ public class FolderActivity extends Activity {
 
             TextView tv = new TextView(this);
             tv.setText(a.label);
-            tv.setTextColor(getColor(R.color.text_dim));
+            tv.setTextColor(Skin.c(R.color.text_dim));
             tv.setTextSize(10);
             tv.setMaxLines(1);
             cell.addView(tv);
@@ -138,11 +138,11 @@ public class FolderActivity extends Activity {
     private View op(String label, View.OnClickListener l) {
         TextView tv = new TextView(this);
         tv.setText(label);
-        tv.setTextColor(getColor(R.color.text));
+        tv.setTextColor(Skin.c(R.color.text));
         tv.setTextSize(14);
         tv.setGravity(Gravity.CENTER);
         tv.setPadding(dp(10), dp(12), dp(10), dp(12));
-        tv.setBackgroundColor(getColor(R.color.card));
+        tv.setBackgroundColor(Skin.c(R.color.card));
         tv.setOnClickListener(l);
         return tv;
     }
@@ -150,7 +150,7 @@ public class FolderActivity extends Activity {
     private void rename(LauncherModel.Folder f) {
         EditText et = new EditText(this);
         et.setText(f.name);
-        et.setTextColor(getColor(R.color.text));
+        et.setTextColor(Skin.c(R.color.text));
         et.setHint("文件夹名字");
         new AlertDialog.Builder(this)
                 .setTitle("重命名")

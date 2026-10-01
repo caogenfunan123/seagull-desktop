@@ -548,6 +548,27 @@ public final class LauncherModel {
     public void unpin(String key) { pinned.remove(key); save(); }
     public boolean isPinned(String key) { return pinned.contains(key); }
 
+    public int pinnedIndex(String key) { return pinned.indexOf(key); }
+
+    /** 主屏里挪位置：delta = -1 上移 / +1 下移。到头不动。 */
+    public void movePinned(String key, int delta) {
+        int i = pinned.indexOf(key);
+        int j = i + delta;
+        if (i < 0 || j < 0 || j >= pinned.size()) return;
+        pinned.remove(i);
+        pinned.add(j, key);
+        save();
+    }
+
+    /** 置顶（自己摆的布局：长按图标就能调顺序）。 */
+    public void pinTop(String key) {
+        int i = pinned.indexOf(key);
+        if (i <= 0) return;
+        pinned.remove(i);
+        pinned.add(0, key);
+        save();
+    }
+
     public void toggleDock(String key) {
         if (key == null) return;
         if (dock.contains(key)) dock.remove(key);
@@ -831,6 +852,8 @@ public final class LauncherModel {
     public void load() {
         String raw = sp().getString(K_LAYOUT, null);
         if (raw == null) { defaults(); return; }
+        // 重读前先清空列表字段，否则 widgets/folders/tasks 会越读越多
+        reset();
         try {
             JSONObject o = new JSONObject(raw);
             mode = optEnum(o, "mode", Mode.class, mode);
@@ -1010,6 +1033,20 @@ public final class LauncherModel {
         mode = Mode.WIDGET_TOP;
         layoutPreset = 0;
         save();
+    }
+
+    /**
+     * 只读全局字号。attachBaseContext 里要用，那时尚未构造 model，
+     * 这里直接解析存档，不跑应用枚举（queryIntentActivities 很贵）。
+     */
+    public static int fontScaleOf(Context c) {
+        try {
+            String raw = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getString(K_LAYOUT, null);
+            return raw == null ? 100 : new JSONObject(raw).optInt("fontScale", 100);
+        } catch (Throwable t) {
+            return 100;
+        }
     }
 
     private static void readInto(JSONArray arr, List<String> dst) {

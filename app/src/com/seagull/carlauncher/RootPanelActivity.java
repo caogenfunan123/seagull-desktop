@@ -15,7 +15,7 @@ import android.widget.TextView;
  * root 功能面板 —— 每条操作都是真实执行（su -c），结果显示在下方日志里。
  * 没有 root 时全部显示为不可用并给出原因，不做假成功。
  */
-public class RootPanelActivity extends Activity {
+public class RootPanelActivity extends BaseActivity {
 
     private TextView env, log;
     private final StringBuilder buf = new StringBuilder();
@@ -41,29 +41,29 @@ public class RootPanelActivity extends Activity {
         ScrollView sv = new ScrollView(this);
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
-        col.setBackgroundColor(getColor(R.color.ground));
+        col.setBackgroundColor(Skin.c(R.color.ground));
         col.setPadding(dp(20), dp(16), dp(20), dp(24));
 
         TextView back = new TextView(this);
         back.setText("← 返回桌面");
-        back.setTextColor(getColor(R.color.leaf));
+        back.setTextColor(Skin.c(R.color.leaf));
         back.setTextSize(16);
         back.setOnClickListener(v -> finish());
         col.addView(back);
 
         TextView t = new TextView(this);
         t.setText("root 功能");
-        t.setTextColor(getColor(R.color.text));
+        t.setTextColor(Skin.c(R.color.text));
         t.setTextSize(22);
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-2, -2);
         tp.topMargin = dp(8); tp.bottomMargin = dp(10);
         col.addView(t, tp);
 
         env = new TextView(this);
-        env.setTextColor(getColor(R.color.text_dim));
+        env.setTextColor(Skin.c(R.color.text_dim));
         env.setTextSize(12);
         env.setTypeface(Typeface.MONOSPACE);
-        env.setBackgroundColor(getColor(R.color.panel));
+        env.setBackgroundColor(Skin.c(R.color.panel));
         env.setPadding(dp(12), dp(10), dp(12), dp(10));
         col.addView(env);
 
@@ -71,7 +71,7 @@ public class RootPanelActivity extends Activity {
         if (!root) {
             TextView warn = new TextView(this);
             warn.setText("⚠ 未检测到 root 通道：以下操作不会真的执行。");
-            warn.setTextColor(getColor(R.color.bad));
+            warn.setTextColor(Skin.c(R.color.bad));
             warn.setTextSize(13);
             warn.setPadding(0, dp(10), 0, 0);
             col.addView(warn);
@@ -128,7 +128,7 @@ public class RootPanelActivity extends Activity {
         })));
 
         log = new TextView(this);
-        log.setTextColor(getColor(R.color.warn));
+        log.setTextColor(Skin.c(R.color.warn));
         log.setTextSize(11);
         log.setTypeface(Typeface.MONOSPACE);
         log.setPadding(0, dp(16), 0, 0);
@@ -141,7 +141,7 @@ public class RootPanelActivity extends Activity {
     private TextView section(String s) {
         TextView tv = new TextView(this);
         tv.setText(s);
-        tv.setTextColor(getColor(R.color.leaf));
+        tv.setTextColor(Skin.c(R.color.leaf));
         tv.setTextSize(14);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-2, -2);
         p.topMargin = dp(20); p.bottomMargin = dp(8);
@@ -174,11 +174,11 @@ public class RootPanelActivity extends Activity {
     private View btn(String label, VoidOp o) {
         TextView tv = new TextView(this);
         tv.setText(label);
-        tv.setTextColor(getColor(R.color.text));
+        tv.setTextColor(Skin.c(R.color.text));
         tv.setTextSize(14);
         tv.setGravity(Gravity.CENTER_VERTICAL);
         tv.setPadding(dp(14), dp(13), dp(14), dp(13));
-        tv.setBackgroundColor(getColor(R.color.card));
+        tv.setBackgroundColor(Skin.c(R.color.card));
         tv.setOnClickListener(v -> o.run());
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
         p.topMargin = dp(8);
@@ -189,11 +189,11 @@ public class RootPanelActivity extends Activity {
     private View slider(int min, int max, int cur, final IntCb cb) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setBackgroundColor(getColor(R.color.card));
+        box.setBackgroundColor(Skin.c(R.color.card));
         box.setPadding(dp(14), dp(10), dp(14), dp(6));
 
         final TextView val = new TextView(this);
-        val.setTextColor(getColor(R.color.text));
+        val.setTextColor(Skin.c(R.color.text));
         val.setTextSize(14);
         val.setText("当前: " + cur);
         box.addView(val);

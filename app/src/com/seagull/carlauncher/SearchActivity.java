@@ -27,7 +27,7 @@ import java.util.Locale;
  * 结果可直接启动，或固定到 Dock / 加入文件夹（长按）。
  * 对齐 TODO P0-4：输入 2 个字符出结果，点结果能启动。
  */
-public class SearchActivity extends Activity {
+public class SearchActivity extends BaseActivity {
 
     private LauncherModel model;
     private LinearLayout list;
@@ -53,14 +53,14 @@ public class SearchActivity extends Activity {
     private View build() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(getColor(R.color.ground));
+        root.setBackgroundColor(Skin.c(R.color.ground));
         root.setPadding(dp(16), dp(12), dp(16), 0);
 
         LinearLayout head = new LinearLayout(this);
         head.setGravity(Gravity.CENTER_VERTICAL);
         TextView back = new TextView(this);
         back.setText("← 返回");
-        back.setTextColor(getColor(R.color.leaf));
+        back.setTextColor(Skin.c(R.color.leaf));
         back.setTextSize(15);
         back.setPadding(0, dp(6), dp(12), dp(6));
         back.setOnClickListener(v -> finish());
@@ -69,12 +69,12 @@ public class SearchActivity extends Activity {
 
         input = new EditText(this);
         input.setHint("搜应用名 / 包名 / 拼音首字母");
-        input.setHintTextColor(getColor(R.color.text_dim));
-        input.setTextColor(getColor(R.color.text));
+        input.setHintTextColor(Skin.c(R.color.text_dim));
+        input.setTextColor(Skin.c(R.color.text));
         input.setTextSize(16);
         input.setSingleLine(true);
         input.setPadding(dp(12), dp(10), dp(12), dp(10));
-        input.setBackgroundColor(getColor(R.color.card));
+        input.setBackgroundColor(Skin.c(R.color.card));
         root.addView(input, new LinearLayout.LayoutParams(-1, -2));
 
         ScrollView sv = new ScrollView(this);
@@ -120,7 +120,7 @@ public class SearchActivity extends Activity {
         box.setOrientation(LinearLayout.HORIZONTAL);
         box.setGravity(Gravity.CENTER_VERTICAL);
         box.setPadding(dp(12), dp(10), dp(12), dp(10));
-        box.setBackgroundColor(getColor(R.color.card));
+        box.setBackgroundColor(Skin.c(R.color.card));
 
         ImageView iv = new ImageView(this);
         Drawable d = model.icon(a);
@@ -131,12 +131,12 @@ public class SearchActivity extends Activity {
         txt.setOrientation(LinearLayout.VERTICAL);
         TextView name = new TextView(this);
         name.setText(a.label);
-        name.setTextColor(getColor(R.color.text));
+        name.setTextColor(Skin.c(R.color.text));
         name.setTextSize(15);
         txt.addView(name);
         TextView sub = new TextView(this);
         sub.setText(a.pkg + "   " + Pinyin.initials(a.label));
-        sub.setTextColor(getColor(R.color.text_dim));
+        sub.setTextColor(Skin.c(R.color.text_dim));
         sub.setTextSize(10);
         txt.addView(sub);
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(0, -2, 1f);
@@ -221,7 +221,7 @@ public class SearchActivity extends Activity {
     private void newFolderThenAdd(final LauncherModel.App a) {
         final android.widget.EditText et = new android.widget.EditText(this);
         et.setHint("文件夹名字");
-        et.setTextColor(getColor(R.color.text));
+        et.setTextColor(Skin.c(R.color.text));
         new AlertDialog.Builder(this)
                 .setTitle("新建文件夹")
                 .setView(et)
@@ -240,7 +240,7 @@ public class SearchActivity extends Activity {
     private void note(String s) {
         TextView tv = new TextView(this);
         tv.setText(s);
-        tv.setTextColor(getColor(R.color.text_dim));
+        tv.setTextColor(Skin.c(R.color.text_dim));
         tv.setTextSize(13);
         tv.setPadding(dp(6), dp(24), dp(6), dp(6));
         list.addView(tv);

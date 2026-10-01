@@ -23,7 +23,7 @@ import android.widget.Toast;
  * 窗口能力自检 & 各项能力的手动验证入口。
  * 这一页是排障用的：能不能开悬浮窗、能不能建虚拟屏、root 在哪一档，全在这里看。
  */
-public class WindowTestActivity extends Activity {
+public class WindowTestActivity extends BaseActivity {
 
     private static final int REQ_PROJECTION = 0x5EA1;
 
@@ -48,29 +48,29 @@ public class WindowTestActivity extends Activity {
     private View build() {
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
-        col.setBackgroundColor(getColor(R.color.ground));
+        col.setBackgroundColor(Skin.c(R.color.ground));
         col.setPadding(dp(20), dp(16), dp(20), dp(16));
 
         TextView back = new TextView(this);
         back.setText("← 返回桌面");
-        back.setTextColor(getColor(R.color.leaf));
+        back.setTextColor(Skin.c(R.color.leaf));
         back.setTextSize(16);
         back.setOnClickListener(v -> finish());
         col.addView(back);
 
         TextView t = new TextView(this);
         t.setText(R.string.window_test_title);
-        t.setTextColor(getColor(R.color.text));
+        t.setTextColor(Skin.c(R.color.text));
         t.setTextSize(22);
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-2, -2);
         tp.topMargin = dp(8); tp.bottomMargin = dp(12);
         col.addView(t, tp);
 
         report = new TextView(this);
-        report.setTextColor(getColor(R.color.text));
+        report.setTextColor(Skin.c(R.color.text));
         report.setTextSize(13);
         report.setTypeface(android.graphics.Typeface.MONOSPACE);
-        report.setBackgroundColor(getColor(R.color.panel));
+        report.setBackgroundColor(Skin.c(R.color.panel));
         report.setPadding(dp(14), dp(12), dp(14), dp(12));
         col.addView(report);
 
@@ -105,14 +105,14 @@ public class WindowTestActivity extends Activity {
                 + "· L3 虚拟屏：目标应用被真正搬进虚拟屏，需要 uid=1000（系统应用）。\n"
                 + "  普通应用即使建成虚拟屏，setLaunchDisplayId 也会被系统拒绝 —— 这是本机验证过的结论。\n"
                 + "· 想上 L3，路径是：root 把本应用装进 /system/priv-app（或 LSPosed hook 掉校验）。");
-        note.setTextColor(getColor(R.color.text_dim));
+        note.setTextColor(Skin.c(R.color.text_dim));
         note.setTextSize(12);
         LinearLayout.LayoutParams np = new LinearLayout.LayoutParams(-2, -2);
         np.topMargin = dp(16);
         col.addView(note, np);
 
         log = new TextView(this);
-        log.setTextColor(getColor(R.color.warn));
+        log.setTextColor(Skin.c(R.color.warn));
         log.setTextSize(12);
         log.setTypeface(android.graphics.Typeface.MONOSPACE);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
@@ -127,11 +127,11 @@ public class WindowTestActivity extends Activity {
     private View btn(String label, View.OnClickListener l) {
         TextView tv = new TextView(this);
         tv.setText(label);
-        tv.setTextColor(getColor(R.color.leaf));
+        tv.setTextColor(Skin.c(R.color.leaf));
         tv.setTextSize(14);
         tv.setGravity(Gravity.CENTER_VERTICAL);
         tv.setPadding(dp(14), dp(14), dp(14), dp(14));
-        tv.setBackgroundColor(getColor(R.color.card));
+        tv.setBackgroundColor(Skin.c(R.color.card));
         tv.setOnClickListener(l);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
         p.topMargin = dp(10);

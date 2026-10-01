@@ -19,7 +19,7 @@ import android.widget.Toast;
  *
  * 授权必须由 Activity 发起（Android 的硬性要求），所以这里是一个透明中转页。
  */
-public class MirrorRequestActivity extends Activity {
+public class MirrorRequestActivity extends BaseActivity {
 
     private static final String TAG = "SeagullMirror";
     private static final int REQ = 0x5EA2;
