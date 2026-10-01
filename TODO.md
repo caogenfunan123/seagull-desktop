@@ -200,6 +200,15 @@
 - [x] **统一签名**：`keystore/seagull-release.keystore`（唯一签名文件）+ build.sh/CI 改造 + secrets（SEAGULL_KEYSTORE_B64 / SEAGULL_KS_PASS）+ `docs/SIGNING.md`
 - [ ] 用户验收：装本包需先卸载旧版一次（旧包是随机签名，此后永久免卸载）；两次 CI 产物 `apksigner verify --print-certs` 指纹应一致
 
+### P2-7 画中画成为首屏（左右分割 + 默认横屏 + 底栏精简）✅ 代码已写，CI 待验（批次 M）
+- [x] **进应用即画中画**：新增 `PipBoard`（可复用面板），HomeActivity 内容层改成 PipBoard ⇄ DesktopView 二选一，默认画中画；桌面网格降为次级层（底栏「桌面/画中画」按钮切换）
+- [x] **左右分割**：两块画布各 weight 1 左右排（旧版上下半屏废弃）；VD 仍按画布实测像素 1:1
+- [x] **桌面默认横屏**：`LauncherModel.orientation` 默认 AUTO → LANDSCAPE
+- [x] **界面精简**：底栏砍「镜像小窗」（子页面已无意义）与「叶」键（菜园走 设置 → 桌面 → 菜园 / 小白点长按）；顶栏「整理」只在桌面模式显示
+- [x] `MirrorActivity` 薄壳化（躯干=PipBoard）：Dock 投应用入口 + SelfTestMirror 自检保留；画布逻辑两份并一份
+- [x] 同槽部署/挂面串行化（`synchronized (slot)`），防并行双建 VD
+- [ ] 用户验收：进应用首屏是不是画中画；切「桌面」网格正常；横屏下车机/手机都正常
+
 ---
 
 ## 明确不做

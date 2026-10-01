@@ -40,7 +40,7 @@ app/
   src/com/seagull/carlauncher/
     BaseActivity.java          公共基类：fontScale + Skin + 方向 + model
     LauncherModel.java         全量配置单一事实源（最大的文件，改它要小心）
-    HomeActivity.java          桌面宿主：顶/底栏、壁纸、野蛮岛、常亮
+    HomeActivity.java          桌面宿主：顶栏 + 内容层（PipBoard 画中画首屏 ⇄ DesktopView 网格）+ 底栏
     DesktopView.java           桌面网格 + 组件条 + Dock + 拖拽压合 + 长按菜单
     Skin.java / Theme.java     运行时配色 / 内置 14 套主题
     Wallpaper.java             壁纸导入 + 亮度抽样
@@ -54,7 +54,8 @@ app/
     TouchForward.java          触摸转发（双通道：守护中继 / input 命令）
     MirrorSlot.java            虚拟屏镜像槽（两块；TRUSTED 优先 + 投影兜底 + 1:1）
     MirrorHost.java            画中画槽进程级持有者：退出页面不断屏、桌面自愈、清空入口
-    MirrorActivity.java        画中画界面：只有两块画布，长按选应用，零按钮
+    PipBoard.java              画中画面板：左右两块画布 + 长按选应用 + 部署/授权/自愈（HomeActivity 与 MirrorActivity 共用）
+    MirrorActivity.java        画中画薄壳（躯干=PipBoard）：Dock 投应用入口 + SelfTestMirror 自检
     TrustedFlags.java          TRUSTED 屏 flag 候选/规范化/受信位校验
     StackScan.java             am stack list 解析：任务在哪个屏（纯 JVM，可自检）
     PrivCodec.java             守护进程线协议（纯 JVM，可自检）
@@ -105,8 +106,9 @@ Skin.c(R.color.text)                   // 拿到当前主题下的实际色值
 
 VD 一旦 `release()`，系统会把屏上的任务倒回默认屏 —— 桌面立刻冒出全屏应用
 （用户原话："每次进入桌面还是应用界面"）。VD 归进程级 `MirrorHost`，
-`MirrorActivity.onDestroy` 只 `detachSurface()`；拆屏的唯一入口是
-`MirrorHost.clear()`（长按 → 清空该槽，会 force-stop 画中画里的应用）。
+`PipBoard.onDestroy`（HomeActivity / MirrorActivity 都转发到它）只
+`detachSurface()`；拆屏的唯一入口是 `MirrorHost.clear()`
+（长按 → 清空该槽，会 force-stop 画中画里的应用）。
 
 ### 4.5 签名：每个包必须是同一把钥匙
 

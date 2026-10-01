@@ -266,7 +266,8 @@ public final class LauncherModel {
     public int portMarginH = 12;
     public int portMarginV = 8;
     public int portGap = 6;
-    public Orientation orientation = Orientation.AUTO;
+    /** 默认横屏（用户要求：桌面默认横屏；竖屏党可在 设置 → 显示 里改）。 */
+    public Orientation orientation = Orientation.LANDSCAPE;
     public boolean keepScreenOn = false;
     public boolean hideSystemBars = false;
     public boolean topInfoBar = true;          // 顶部信息栏

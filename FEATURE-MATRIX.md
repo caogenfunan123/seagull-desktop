@@ -239,7 +239,9 @@
 | # | 功能 | 状态 | 备注 |
 |---|---|---|---|
 | 11.1 | 画中画（系统 PiP，L2） | ✅ | 实测可用 |
-| 11.2 | 虚拟屏窗口（L3，root） | 🟡 | TRUSTED 屏优先（角色授予 + 5 组 flag 候选 + 受信位 1<<7 校验），失败回落 MediaProjection PUBLIC\|OWN_CONTENT_ONLY\|PRESENTATION。VD 按画布像素 1:1；flags 0x18800000 + `--user 0`；**进程级常驻：退出页面只断 Surface 不拆屏**（拆屏会把任务倒回主屏冒全屏，正是"进入桌面还是应用界面"的根因）；搬完立即自愈 + 桌面 resume 自愈（3s 节流） |
+| 11.2 | 虚拟屏窗口（L3，root） | 🟡 | TRUSTED 屏优先（角色授予 + 5 组 flag 候选 + 受信位 1<<7 校验），失败回落 MediaProjection PUBLIC\|OWN_CONTENT_ONLY\|PRESENTATION。**批次 M 起画中画是首屏**：HomeActivity 内容层 PipBoard ⇄ DesktopView 二选一，进应用默认画中画，桌面网格降为次级层（底栏按钮切回）；VD 按画布像素 1:1；flags 0x18800000 + `--user 0`；**进程级常驻：退出页面只断 Surface 不拆屏**（拆屏会把任务倒回主屏冒全屏，正是"进入桌面还是应用界面"的根因）；搬完立即自愈 + 桌面 resume 自愈（3s 节流） |
+| 11.2a | 画中画左右分割 | ✅ | 批次 M：PipBoard 两块画布左右各 weight 1（用户"画中画左右分割"）；旧版上下半屏已废弃 |
+| 11.2b | 桌面默认横屏 | ✅ | `LauncherModel.orientation` 默认 LANDSCAPE（用户"桌面默认横屏"），设置 → 显示 可改 |
 | 11.3 | 每格绑应用 | ✅ | 镜像两槽各绑一个包名，存 `mirrorPkg1/2` |
 | 11.4 | 各应用显示大小（独立 dpi） | ⛔ | `setDisplayId` 被拒 |
 | 11.5 | 默认显示大小 | ⛔ | 同上 |

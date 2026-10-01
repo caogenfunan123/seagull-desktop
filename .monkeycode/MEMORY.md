@@ -50,6 +50,15 @@ Entries discovered by the Agent during task execution should follow this format:
   - 诊断信息只进 logcat（tag=SeagullMirrorAct / SeagullMirror / SeagullRootOps），不在界面展示
   - 空画布中央只留一行提示文字（"长按选择应用"/"启动中…"），不算多余元素
 
+[画中画必须是首屏 + 桌面默认横屏 + 界面精简]
+- Date: 2026-10-01
+- Context: 用户四条要求："画中画左右分割""桌面默认横屏""进入应用应该是画中画界面，不应该是设置里的子界面""界面太多不合理的地方精简一下"
+- Instructions:
+  - 打开应用（HomeActivity）默认落在画中画界面；画中画两块画布左右分割（各占一半宽）
+  - 桌面默认横屏：LauncherModel.orientation 默认值用 LANDSCAPE
+  - 桌面网格这些既有界面降为次级层（底栏按钮切换），不砍功能，但把只服务画中画的子页面入口（底栏"镜像小窗"）删掉，含义不明的按钮（"叶"键）也删
+  - 以后新增"画中画相关"界面优先做成可复用 View（PipBoard）嵌进首屏，不要再开新 Activity 当子页面
+
 [Project Knowledge Summary]
 - Date: 2026-10-01
 - Context: Discovered by Agent while fixing "每次进入桌面还是应用界面"（批次 L）

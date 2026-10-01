@@ -480,3 +480,45 @@ StackListCheck 12 项此前已过，本批未动其输入）。签名一致性�
   seagull-pipN flags）；不成立则走投影兜底 + 自愈，画中画会偶发被拉走。
 - 换签名的代价：用户设备上已装的旧版是随机签名，本包需卸载重装一次，
   之后永久免卸载。
+
+## 批次 M — 画中画成为首屏（左右分割 + 桌面降级 + 默认横屏 + 底栏精简）
+
+**目标**：用户四条新要求：
+①「画中画左右分割」②「桌面默认横屏」③「进入应用应该是画中画界面，
+不应该是设置里的子界面」④「界面太多不合理的地方精简一下」。
+
+**改动**
+
+- 新增 `PipBoard.java`：可复用画中画面板（LinearLayout，左右两块画布各
+  weight 1）。长按画布 → 宿主弹应用列表（长按被 GestureDetector 截走、
+  先给 TouchForward 补 CANCEL 掐残留笔画；对话框带「清空该槽」= 拆屏 +
+  force-stop）；点/滑/拖照常转发。部署/挂面/自愈/录屏授权补弹全包在
+  面板里，同槽部署串行化（`synchronized (slot)`，防并行双建 VD 漏屏）。
+- `HomeActivity`：内容层改成 FrameLayout 二选一 —— `PipBoard`（默认首屏）
+  ⇄ `DesktopView`（次级层，底栏第一个按钮切回）。顶栏「整理」只在桌面
+  模式显示；onResume 在画中画模式转 `pip.onResume()`；onDestroy 转
+  `pip.onDestroy()`；onActivityResult 转授权结果；30s tick 改为刷新画布提示。
+- `MirrorActivity` 薄壳化：躯干就是一块 PipBoard（构造参数
+  `autoDeploy` 给自检页关掉抢跑），只剩两个用途 —— DesktopView Dock 的
+  「投进画中画」入口（intentFor 不变）与 SelfTestMirror 自检（selftest
+  extra 不变，onActivityResult 先问 SelfTestMirror.isOurRequest）。
+  两份画布逻辑并成一份，漂移面归零。
+- 底栏精简：砍「镜像小窗」（画中画已是首屏，那个子页面没意义）与含义
+  不明的「叶」键（菜园改从 设置 → 桌面 → 菜园 / 小白点长按 进）；
+  设置里菜园分区的说明文字同步改。
+- `LauncherModel.orientation` 默认 `AUTO` → **`LANDSCAPE`**（用户：桌面
+  默认横屏；竖屏党仍可在 设置 → 显示 改，BaseActivity 已有分支）。
+
+**验证**：`typecheck.sh` 通过。画面/自愈行为未变的证据链：批次 K/L 的
+TrustedFlagsCheck 10 项、StackListCheck 12 项输入未动；VD 常驻、部署串行化
+改动都在 PipBoard 内部，链路与批次 L 实测一致。
+
+**复盘**
+
+- 决策：画中画做成「可复用 View」而不是「又一个 Activity」—— 用户要的
+  「进应用就是画中画」本质上是首屏换内容层，Activity 跳转反而多一层。
+- 决策：桌面网格保留为次级层而不是删掉 —— 组件条/Dock/文件夹这些既有
+  功能还在，砍掉等于回退一批次。
+- 遗留：真机三问照旧（TRUSTED 角色是否授到 / SELinux / moveRootTaskToDisplay），
+  要用户回传 logcat（`SeagullRootOps` 的"TRUSTED 角色授予"行 +
+  `dumpsys display` 的 seagull-pipN flags）。

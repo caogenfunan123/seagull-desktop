@@ -302,8 +302,8 @@ public class SettingsSectionActivity extends BaseActivity {
         });
         actionRow("进一次菜园看看", "看看现在的样子", v ->
                 startActivity(new Intent(this, GardenActivity.class)));
-        note("桌面底栏的「叶」长按进菜园，菜园里再长按一次出来；点叶子出全部应用。"
-                + "菜园的压暗跟外观里的背景遮罩是两份，互不影响。");
+        note("点上面「进一次菜园看看」进菜园，菜园里再长按一次出来。"
+                + "桌面右下角的小白点（野菜键）也能进菜园。菜园的压暗跟外观里的背景遮罩是两份，互不影响。");
     }
 
     private void ballBody() {

@@ -30,7 +30,13 @@ import java.util.List;
 /**
  * 桌面主界面 —— 海鸥桌面（公开版 HOME）。
  *
- * 结构：顶栏（时钟/日期/整理/设置） + DesktopView（组件条 + 应用网格 + Dock） + 底栏（全部应用/布局/镜像/工具）。
+ * 结构（批次 M 起，画中画优先）：顶栏（时钟/整理/搜索/设置）
+ *   + 内容层（PipBoard 画中画 ⇄ DesktopView 桌面网格，二选一）
+ *   + 底栏（画中画/桌面切换、全部应用、布局组件、工具）。
+ *
+ * 进应用默认就是画中画界面（用户原话："进入应用应该是画中画界面，
+ * 不应该是设置里的子界面、界面太多不合理"）：桌面网格降为可切换的次级层，
+ * 底栏第一个按钮切回去。
  *
  * 全部公开 API：不需要 root、不需要任何签名权限，装到 Android 29+ 设备即可当桌面使用。
  * 静态 API（PREFS / AppEntry / loadApps / pinStatic）被另外 5 个文件依赖，保持兼容不变。
@@ -43,7 +49,11 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
     private SharedPreferences prefs;
 
     private DesktopView desktop;
+    private PipBoard pip;
+    /** true = 首屏画中画（默认）；false = 桌面网格。底栏按钮切换。 */
+    private boolean pipMode = true;
     private LinearLayout topBar, bottomBar, mainCol;
+    private FrameLayout content;
     private TextView pipBox;
     private IslandView island;
     private String lastSkin = "";
@@ -56,7 +66,8 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         setContentView(buildUi());
         buildTopBar();
         buildBottomBar();
-        desktop.refresh();
+        // 首屏是画中画：桌面网格等切过去再刷（toggleMode 里会刷）
+        if (!pipMode) desktop.refresh();
         ui.postDelayed(tick, 30_000L);
     }
 
@@ -98,8 +109,13 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
             buildTopBar();
             buildBottomBar();
             if (desktop != null) desktop.refresh();
-        } else if (desktop != null) {
-            desktop.refresh();
+        } else {
+            // 画中画是首屏：回来就重新挂 Surface / 自愈；桌面模式才刷网格
+            if (pipMode) {
+                if (pip != null) pip.onResume();
+            } else if (desktop != null) {
+                desktop.refresh();
+            }
             buildTopBar();
         }
         if (island != null) {
@@ -137,17 +153,27 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
 
     @Override protected void onDestroy() {
         ui.removeCallbacksAndMessages(null);
+        if (pip != null) pip.onDestroy();   // 只断 Surface，VD 留给 MirrorHost 常驻
         super.onDestroy();
     }
 
     private final Runnable tick = new Runnable() {
         @Override public void run() {
-            if (desktop != null) desktop.refresh();
             if (topBar != null) buildTopBar();
             if (island != null && model != null) island.bind(model);
+            if (pipMode) {
+                if (pip != null) pip.updateHintsPublic();
+            } else if (desktop != null) {
+                desktop.refresh();
+            }
             ui.postDelayed(this, 30_000L);
         }
     };
+
+    @Override protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (pip != null) pip.onActivityResult(req, res, data);   // 录屏授权只在投影兜底路径才弹
+    }
 
     private int dp(float v) {
         return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v,
@@ -172,7 +198,11 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         mainCol.addView(topBar, new LinearLayout.LayoutParams(-1, dp(58)));
 
         desktop = new DesktopView(this, this);
-        mainCol.addView(desktop, new LinearLayout.LayoutParams(-1, 0, 1f));
+        pip = new PipBoard(this, slot -> PipBoard.showPicker(this, slot, pip));
+        content = new FrameLayout(this);
+        content.addView(desktop, new FrameLayout.LayoutParams(-1, -1));
+        content.addView(pip, new FrameLayout.LayoutParams(-1, -1));
+        mainCol.addView(content, new LinearLayout.LayoutParams(-1, 0, 1f));
 
         bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -199,7 +229,26 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         pipBox.setVisibility(View.GONE);
         root.addView(pipBox, new FrameLayout.LayoutParams(-1, -1));
 
+        applyMode();   // 首屏 = 画中画（用户：进应用就是画中画界面）
         return root;
+    }
+
+    /**
+     * 内容层二选一：画中画（默认首屏）⇄ 桌面网格。
+     * 画中画是用户要的主界面，桌面网格是次级层，底栏第一个按钮来回切。
+     */
+    private void applyMode() {
+        if (content == null || desktop == null || pip == null) return;
+        desktop.setVisibility(pipMode ? View.GONE : View.VISIBLE);
+        pip.setVisibility(pipMode ? View.VISIBLE : View.GONE);
+        if (bottomBar != null) buildBottomBar();
+        if (topBar != null) buildTopBar();
+    }
+
+    private void toggleMode() {
+        pipMode = !pipMode;
+        applyMode();
+        if (!pipMode && desktop != null) desktop.refresh();
     }
 
     /**
@@ -267,6 +316,8 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         edit.setTextSize(13);
         edit.setPadding(dp(12), dp(7), dp(12), dp(7));
         edit.setBackgroundColor(Skin.c(R.color.card));
+        // 整理只对桌面网格有意义；画中画首屏时藏起来
+        edit.setVisibility(pipMode ? View.GONE : View.VISIBLE);
         edit.setOnClickListener(v -> {
             desktop.editMode = !desktop.editMode;
             buildTopBar();
@@ -301,32 +352,25 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         topBar.addView(set);
     }
 
+    /**
+     * 底栏（批次 M 精简）：画中画 ⇄ 桌面 的切换 + 全部应用 / 布局组件 / 工具。
+     * 砍掉「镜像小窗」（画中画已是首屏，那个子页面没意义）和含义不明的「叶」键
+     * （菜园改从 设置 → 桌面 → 菜园 进）。
+     */
     private void buildBottomBar() {
         if (bottomBar == null) return;
         bottomBar.removeAllViews();
-        bottomBar.addView(barBtn("全部应用", R.color.leaf,
+        bottomBar.addView(barBtn(pipMode ? "桌面" : "画中画", R.color.leaf,
+                v -> toggleMode()), weight());
+        bottomBar.addView(gap(), new LinearLayout.LayoutParams(dp(8), 1));
+        bottomBar.addView(barBtn("全部应用", R.color.text,
                 v -> startActivity(new Intent(this, AppListActivity.class))), weight());
         bottomBar.addView(gap(), new LinearLayout.LayoutParams(dp(8), 1));
         bottomBar.addView(barBtn("布局组件", R.color.text,
                 v -> startActivity(new Intent(this, LayoutModeActivity.class))), weight());
         bottomBar.addView(gap(), new LinearLayout.LayoutParams(dp(8), 1));
-        bottomBar.addView(barBtn("镜像小窗", R.color.text,
-                v -> startActivity(new Intent(this, MirrorActivity.class))), weight());
-        bottomBar.addView(gap(), new LinearLayout.LayoutParams(dp(8), 1));
         bottomBar.addView(barBtn("工具", R.color.warn,
                 v -> startActivity(new Intent(this, RootPanelActivity.class))), weight());
-        bottomBar.addView(gap(), new LinearLayout.LayoutParams(dp(8), 1));
-        // 野菜键：点=全部应用，长按=进菜园（长按超过 longPressMs 才算）
-        View leaf = barBtn("叶", R.color.leaf, v -> startActivity(new Intent(this, AppListActivity.class)));
-        leaf.setOnLongClickListener(v -> {
-            if (model != null && !model.gardenEnabled) {
-                toast("菜园已关：设置 → 桌面 → 菜园");
-                return true;
-            }
-            startActivity(new Intent(this, GardenActivity.class));
-            return true;
-        });
-        bottomBar.addView(leaf, weight());
     }
 
     private LinearLayout.LayoutParams weight() { return new LinearLayout.LayoutParams(0, -1, 1f); }
