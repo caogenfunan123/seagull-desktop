@@ -81,15 +81,26 @@ public final class PipBoard extends LinearLayout {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final LauncherModel model;
 
-    /** 录屏 token 只服务投影兜底路径；VD 常驻，退出页面不收。 */
-    private MediaProjection projection;
+    /**
+     * 录屏会话：两个槽各持一份独立 MediaProjection（批次 Q 修"第二个画布里是
+     * 第一个画布"）。一个 MediaProjection 只能建一块虚拟屏；两块画布共用一个
+     * 会话时，第二块 createVirtualDisplay 出来的屏会把第一块画面直接复印过来
+     * （用户实测的"递归套娃"）。用同一次授权结果分别取两份会话，各建各的 VD。
+     * VD 归进程级 MirrorHost 常驻，退出页面只断 Surface 不收。
+     */
+    private final MediaProjection[] proj = new MediaProjection[3];
+    private MediaProjection projection;   // 兼容旧字段：proj[1] 的别名，勿单独赋值
+
+    private MediaProjection projFor(int which) {
+        MediaProjection p = which >= 1 && which <= 2 ? proj[which] : null;
+        return p != null ? p : projection;
+    }
     private MirrorSlot slotA, slotB;
     private SurfaceView svA, svB;
     private TextView hintA, hintB;        // 画布中央状态行（启动中…/需要录屏授权…）
     private View emptyA, emptyB;          // 空态大按钮（空画布才有）
     private View maskA, maskB;            // 非焦点遮罩
     private View borderA, borderB;        // 焦点高亮描边
-    private TextView takeA, takeB;        // 「点击接管」
     private final boolean[] longFired = {false, false, false};
     /** armed[i] = 本手势（从 DOWN 起）发生在这块画布已是焦点的时候，才允许外注入。 */
     private final boolean[] armed = {false, false, false};
@@ -156,9 +167,19 @@ public final class PipBoard extends LinearLayout {
         if (slotA != null) slotA.detachSurface();
         if (slotB != null) slotB.detachSurface();
         if (MirrorSlot.activeCount() == 0) {
-            if (projection != null) { try { projection.stop(); } catch (Throwable ignore) {} }
+            stopProjections();
             PipProjectionService.stop(act);
         }
+    }
+
+    private void stopProjections() {
+        for (int i = 1; i <= 2; i++) {
+            if (proj[i] != null) {
+                try { proj[i].stop(); } catch (Throwable ignore) {}
+                proj[i] = null;
+            }
+        }
+        projection = null;
     }
 
     /** 录屏授权结果。返回 true 表示本面板消费了这次回调。 */
@@ -258,20 +279,6 @@ public final class PipBoard extends LinearLayout {
         mask.setVisibility(View.GONE);
         if (which == 1) maskA = mask; else maskB = mask;
         card.addView(mask, new FrameLayout.LayoutParams(-1, -1));
-
-        TextView take = new TextView(act);
-        take.setText("点击接管");
-        take.setTextColor(Skin.c(R.color.text));
-        take.setTextSize(14);           // 扫视优先：不小于 14sp
-        take.setGravity(Gravity.CENTER);
-        take.setBackgroundColor(0x99000000);
-        take.setPadding(dp(16), dp(4), dp(16), dp(4));
-        take.setVisibility(View.GONE);
-        if (which == 1) takeA = take; else takeB = take;
-        FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(-2, -2);
-        tp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
-        tp.bottomMargin = dp(24);
-        card.addView(take, tp);
 
         View border = new View(act);
         border.setBackground(borderBg(Skin.c(R.color.leaf), BORDER_FOCUS_DP));
@@ -403,12 +410,11 @@ public final class PipBoard extends LinearLayout {
         c.recycle();
     }
 
-    /** 焦点描边淡入；非焦点画布上遮罩 + 「点击接管」。 */
+    /** 焦点描边淡入；非焦点画布只盖一层环境光遮罩（不要多余控件）。 */
     private void applyFocusVisuals(boolean animate) {
         for (int i = 1; i <= 2; i++) {
             View border = i == 1 ? borderA : borderB;
             View mask = i == 1 ? maskA : maskB;
-            TextView take = i == 1 ? takeA : takeB;
             boolean focus = (i == focusSlot);
             if (border != null) {
                 if (animate) border.animate().alpha(focus ? 1f : 0f).setDuration(FADE_MS).start();
@@ -422,7 +428,6 @@ public final class PipBoard extends LinearLayout {
                     else mask.setAlpha(maskAlpha);
                 }
             }
-            if (take != null) take.setVisibility(!focus && bound ? View.VISIBLE : View.GONE);
         }
     }
 
@@ -494,16 +499,33 @@ public final class PipBoard extends LinearLayout {
                 MediaProjection fresh = mpm.getMediaProjection(code, data);
                 if (fresh == null) { Log.w(TAG, "getMediaProjection 返回 null"); return; }
                 // 覆盖前先停旧的：否则旧录屏会话 + 回调泄漏到进程结束
-                try { if (projection != null && projection != fresh) projection.stop(); }
-                catch (Throwable ignore) {}
+                stopProjections();
+                proj[1] = fresh;
+                // 第二份会话（同一次授权结果再取一次）。拿不到就退而共用一份：
+                // 那样槽 2 的 VD 会复印槽 1 的画面，日志留证，至少能定位。
+                MediaProjection second = null;
+                try {
+                    second = mpm.getMediaProjection(code, data);
+                } catch (Throwable t) {
+                    Log.w(TAG, "第二份投影会话取得失败: " + t);
+                }
+                proj[2] = second;
+                if (second == null) {
+                    proj[2] = fresh;
+                    Log.w(TAG, "拿不到第二份投影会话：槽 2 将复用槽 1 的（画面可能嵌套，"
+                            + "看 dumpsys display | grep -i virtual 只有一块屏）");
+                } else {
+                    Log.i(TAG, "两份投影会话就绪：两槽各自建各自的虚拟屏");
+                }
                 projection = fresh;
-                projection.registerCallback(new MediaProjection.Callback() {
+                MediaProjection.Callback cb = new MediaProjection.Callback() {
                     @Override public void onStop() {
                         Log.w(TAG, "录屏被系统撤销");
                         MirrorHost.onProjectionStopped(act);
                     }
-                }, ui);
-                Log.i(TAG, "录屏 token 已取得，开始建屏并搬运应用");
+                };
+                fresh.registerCallback(cb, ui);
+                if (second != null) second.registerCallback(cb, ui);
                 deployIfBound();
             } catch (Throwable t) {
                 Log.w(TAG, "getMediaProjection 失败: " + t);
@@ -537,20 +559,48 @@ public final class PipBoard extends LinearLayout {
         final Surface f = surf;
         final int fw = w, fh = h;
         final MirrorSlot s = slot;
+        final MediaProjection mp = projFor(which);
         setHint(which, slot);
         new Thread(() -> {
             // 同一槽的部署/挂面串行：并行会双建 VD
             synchronized (s) {
-                boolean ok = s.deploy(projection, pkg, f, fw, fh,
-                        act.getResources().getDisplayMetrics().densityDpi);
+                boolean ok = s.deploy(mp, pkg, f, fw, fh, dpiFit(fw, fh));
                 final boolean needProj = s.needsProjection();
                 ui.post(() -> {
                     setHint(which, s);
+                    // 两块画布抢同一块 VD 的检测网：哪块屏被两个槽同时握着，
+                    // 槽 2 直接拆掉并报错。静默共屏的后果就是"画布里套着画布"。
+                    MirrorSlot other = slotOf(which == 1 ? 2 : 1);
+                    if (s.displayId() > 0 && other != null && other.displayId() == s.displayId()) {
+                        Log.e(TAG, "槽 " + which + " 与对槽共用 displayId=" + s.displayId()
+                                + "（VD 独立失败，画面会嵌套）→ 拆掉本槽");
+                        s.teardown();
+                    }
                     Log.i(TAG, "槽 " + which + " → " + s.describe() + (ok ? "" : " [失败]"));
-                    if (needProj && projection == null) requestConsent();
+                    if (needProj && mp == null) requestConsent();
                 });
             }
         }, "pip-deploy" + which).start();
+    }
+
+    /**
+     * 画布像素 → VD 密度（批次 Q 修"高德四周黑边"）。
+     *
+     * 黑边的主因不是 VD 尺寸，是密度：直接把手机 densityDpi（440）传给一块
+     * 366px 宽的小屏，应用看到的是 ~85dp 视口，多数 App（高德）把它当小屏，
+     * 按自己声明的最小宽度渲染后居中留黑边（size compat 表现）。
+     * 折成 280dp 基准再反算 dpi：画布 366px @ 209dpi ≈ 280dp 宽，与一台紧凑
+     * 手机视口同量级，应用按正常手机版式铺满。触摸坐标不受 dpi 影响（仍 1:1）。
+     */
+    private int dpiFit(int w, int h) {
+        int def = act.getResources().getDisplayMetrics().densityDpi;
+        int targetDp = 280;                       // 紧凑手机视口宽
+        int byW = Math.round(w * 160f / targetDp);
+        int byH = Math.round(h * 160f / targetDp);
+        int v = Math.max(byW, byH);               // 取大：宽高两侧视口都不超过目标 dp
+        if (v < 160) v = 160;                      // 再小就 mdpi，低于它应用会按低密度锯齿渲染
+        if (v > def) v = def;                      // 不超过设备默认，别让字大过设计稿
+        return v;
     }
 
     /** 没量到画布时的兜底宽度：整屏扣掉卡片留白，按权重比例切。 */
@@ -572,17 +622,19 @@ public final class PipBoard extends LinearLayout {
         final String pkg = pkgOf(which);
         if (pkg == null || pkg.isEmpty()) { setHint(which, slot); return; }
         final MirrorSlot s = slot;
-        final int dpi = act.getResources().getDisplayMetrics().densityDpi;
+        final MediaProjection mp = projFor(which);
+        final int dpi = dpiFit(w, h);
         new Thread(() -> {
             // 同槽串行，理由见 deploySlot
             synchronized (s) {
                 boolean ok = s.attachSurface(surface, w, h, dpi);
-                if (!ok) ok = s.deploy(projection, pkg, surface, w, h, dpi);
+                if (!ok) ok = s.deploy(mp, pkg, surface, w, h, dpi);
                 final boolean needProj = s.needsProjection();
                 ui.post(() -> {
                     setHint(which, s);
-                    Log.i(TAG, "槽 " + which + " → " + s.describe());
-                    if (needProj && projection == null) requestConsent();
+                    Log.i(TAG, "槽 " + which + " → " + s.describe()
+                            + " 画布 " + w + "x" + h + "@" + dpi + "dpi");
+                    if (needProj && mp == null) requestConsent();
                 });
             }
         }, "pip-attach" + which).start();

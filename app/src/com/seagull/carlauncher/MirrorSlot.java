@@ -301,6 +301,12 @@ public final class MirrorSlot implements CanvasSource {
         unregister(displayId);
         try { if (vd != null) vd.release(); } catch (Throwable ignore) {}
         vd = null;
+        // 每槽一份独立投影会话（批次 Q）：VD 拆了就把自己那份停掉。
+        // 早期两槽共用一份会话，这里只能再等等——现在没这个问题了。
+        if (projection != null) {
+            try { projection.stop(); } catch (Throwable ignore) {}
+            projection = null;
+        }
         displayId = -1;
         lastSig = "";
         lastPkg = "";
