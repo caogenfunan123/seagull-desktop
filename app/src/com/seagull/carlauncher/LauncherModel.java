@@ -222,6 +222,8 @@ public final class LauncherModel {
     /* ==================== 状态：快捷栏 ==================== */
 
     public final List<QuickSlot> quickbar = new ArrayList<>();
+    /** 每个桌面布局各有一份快捷栏（TODO P0-6：换布局时快捷栏跟着换）。 */
+    private final Map<Integer, List<QuickSlot>> quickbarByMode = new LinkedHashMap<>();
     public String quickBtn1 = "";     // 快捷开关 1（@fn:xxx）
     public String quickBtn2 = "";     // 快捷开关 2
 
@@ -580,6 +582,30 @@ public final class LauncherModel {
 
     /* ==================== 快捷栏 ==================== */
 
+    /** 切换桌面布局：快捷栏按布局各存一份，切回来还是原来那几格。 */
+    public void switchMode(Mode m) {
+        if (m == null || m == mode) return;
+        swapQuickbar(quickbar, quickbarByMode, mode.ordinal());
+        mode = m;
+        List<QuickSlot> l = quickbarByMode.get(m.ordinal());
+        quickbar.clear();
+        if (l != null) quickbar.addAll(l);
+        save();
+    }
+
+    /** 把当前这组快捷栏存进某个布局的抽屉（纯逻辑，见 selfcheck/QuickbarCheck.java）。 */
+    static void swapQuickbar(List<QuickSlot> cur, Map<Integer, List<QuickSlot>> store, int key) {
+        List<QuickSlot> l = store.get(key);
+        if (l == null) {
+            l = new ArrayList<>();
+            store.put(key, l);
+        }
+        l.clear();
+        l.addAll(cur);
+    }
+
+    private void stashQuickbar() { swapQuickbar(quickbar, quickbarByMode, mode.ordinal()); }
+
     public void setQuickSlot(int idx, String key, String label) {
         while (quickbar.size() <= idx) quickbar.add(new QuickSlot("", ""));
         quickbar.set(idx, new QuickSlot(key == null ? "" : key, label == null ? "" : label));
@@ -692,15 +718,20 @@ public final class LauncherModel {
                 dw.put(o1);
             }
             o.put("dockWin", dw);
-            /* 快捷栏 */
-            JSONArray qa = new JSONArray();
-            for (QuickSlot q : quickbar) {
-                JSONObject qo = new JSONObject();
-                qo.put("k", q.key == null ? "" : q.key);
-                qo.put("l", q.label == null ? "" : q.label);
-                qa.put(qo);
+            /* 快捷栏：每个布局一份 */
+            stashQuickbar();
+            JSONObject qmaps = new JSONObject();
+            for (Map.Entry<Integer, List<QuickSlot>> e : quickbarByMode.entrySet()) {
+                JSONArray arr = new JSONArray();
+                for (QuickSlot q : e.getValue()) {
+                    JSONObject qo = new JSONObject();
+                    qo.put("k", q.key == null ? "" : q.key);
+                    qo.put("l", q.label == null ? "" : q.label);
+                    arr.put(qo);
+                }
+                qmaps.put(String.valueOf(e.getKey()), arr);
             }
-            o.put("quickbar", qa);
+            o.put("quickbars", qmaps);
             o.put("qbtn1", quickBtn1);
             o.put("qbtn2", quickBtn2);
             /* 菜园 */
@@ -843,12 +874,33 @@ public final class LauncherModel {
                 }
             }
 
-            JSONArray qa = o.optJSONArray("quickbar");
-            if (qa != null) {
-                for (int i = 0; i < qa.length(); i++) {
-                    JSONObject qo = qa.optJSONObject(i);
-                    if (qo == null) continue;
-                    quickbar.add(new QuickSlot(qo.optString("k", ""), qo.optString("l", "")));
+            JSONObject qmaps = o.optJSONObject("quickbars");
+            if (qmaps != null) {
+                java.util.Iterator<String> it = qmaps.keys();
+                while (it.hasNext()) {
+                    String k = it.next();
+                    JSONArray arr = qmaps.optJSONArray(k);
+                    List<QuickSlot> l = new ArrayList<>();
+                    if (arr != null) {
+                        for (int i = 0; i < arr.length(); i++) {
+                            JSONObject qo = arr.optJSONObject(i);
+                            if (qo == null) continue;
+                            l.add(new QuickSlot(qo.optString("k", ""), qo.optString("l", "")));
+                        }
+                    }
+                    try { quickbarByMode.put(Integer.parseInt(k), l); } catch (Throwable ignore) {}
+                }
+                List<QuickSlot> cur = quickbarByMode.get(mode.ordinal());
+                if (cur != null) quickbar.addAll(cur);
+            } else {
+                // 旧存档：只有一份快捷栏，归到当前布局
+                JSONArray qa = o.optJSONArray("quickbar");
+                if (qa != null) {
+                    for (int i = 0; i < qa.length(); i++) {
+                        JSONObject qo = qa.optJSONObject(i);
+                        if (qo == null) continue;
+                        quickbar.add(new QuickSlot(qo.optString("k", ""), qo.optString("l", "")));
+                    }
                 }
             }
             quickBtn1 = o.optString("qbtn1", "");
@@ -1008,8 +1060,8 @@ public final class LauncherModel {
     /** 清空内存状态（重新 load 前调用，避免叠加）。 */
     private void reset() {
         pinned.clear(); dock.clear(); widgets.clear(); folders.clear();
-        quickbar.clear(); wallLib.clear(); tasks.clear(); appScale.clear();
-        lyricHidden.clear(); dockWindow.clear();
+        quickbar.clear(); quickbarByMode.clear(); wallLib.clear(); tasks.clear();
+        appScale.clear(); lyricHidden.clear(); dockWindow.clear();
     }
 
     /** 恢复出厂配置 —— 布局、Dock、外观、任务全部换回刚装好的样子。 */

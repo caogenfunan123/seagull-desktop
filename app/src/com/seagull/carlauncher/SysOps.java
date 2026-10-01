@@ -79,6 +79,20 @@ public final class SysOps {
                 + " && am broadcast -a android.intent.action.AIRPLANE_MODE --ez state " + on);
     }
 
+    /** 读开关当前状态（读不到就当作开，让第一次点击变成「关」）。 */
+    public static boolean isOn(Context ctx, String key) {
+        try {
+            return android.provider.Settings.Global.getInt(
+                    ctx.getContentResolver(), key) == 1;
+        } catch (Throwable t) {
+            return true;
+        }
+    }
+
+    public static boolean isWifiOn(Context ctx)      { return isOn(ctx, "wifi_on"); }
+    public static boolean isBluetoothOn(Context ctx) { return isOn(ctx, "bluetooth_on"); }
+    public static boolean isAirplaneOn(Context ctx)  { return isOn(ctx, "airplane_mode_on"); }
+
     /* ---------------- 时间 ---------------- */
 
     public static R setAutoTime(boolean on) {

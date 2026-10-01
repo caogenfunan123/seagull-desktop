@@ -39,13 +39,8 @@ public class SettingsSectionActivity extends Activity {
 
     public static final String EXTRA_SECTION = "section";
 
-    private static final String[] FN_KEYS = {
-            "brightness_up", "brightness_down", "volume_up", "volume_down",
-            "wifi", "bluetooth", "airplane"
-    };
-    private static final String[] FN_LABELS = {
-            "亮度 +", "亮度 −", "音量 +", "音量 −", "Wi-Fi", "蓝牙", "飞行模式"
-    };
+    private static final String[] FN_KEYS = QuickBar.FN_KEYS;
+    private static final String[] FN_LABELS = QuickBar.FN_LABELS;
 
     private LauncherModel model;
     private String section;
@@ -228,7 +223,10 @@ public class SettingsSectionActivity extends Activity {
     }
 
     private void quickbarBody() {
-        note("放进组件条：长按组件条 → 点末尾的「+」→ 选「快捷栏」。在桌面上点空格可以直接选，长按图标可以换或清空。");
+        note("放进组件条：长按组件条（或桌面空白处）→「+ 快捷栏」。"
+                + "每个桌面布局各有一份快捷栏：在「布局与组件」切布局后回来改这里，改的是那一份。");
+        actionRow("当前布局", model.mode.label, v ->
+                startActivity(new Intent(this, LayoutModeActivity.class)));
 
         sectionLabel("快捷栏格子");
         for (int i = 0; i < LauncherModel.QUICKBAR_MAX; i++) {

@@ -61,7 +61,7 @@ public class LayoutModeActivity extends Activity {
         col.addView(listCol);
 
         col.addView(section("组件条（点一下开/关）"));
-        for (int i = 0; i <= 4; i++) col.addView(widgetRow(i));
+        for (int i = 0; i < DesktopView.WIDGET_NAMES.length; i++) col.addView(widgetRow(i));
 
         col.addView(section("其他"));
         col.addView(toggleRow("显示应用名称", model.showLabels, v -> {
@@ -91,9 +91,8 @@ public class LayoutModeActivity extends Activity {
                         .show()));
 
         col.addView(btn("预览网格列数", v -> {
-            model.mode = model.mode == LauncherModel.Mode.GRID
-                    ? LauncherModel.Mode.DENSE : LauncherModel.Mode.GRID;
-            model.save();
+            model.switchMode(model.mode == LauncherModel.Mode.GRID
+                    ? LauncherModel.Mode.DENSE : LauncherModel.Mode.GRID);
             rebuildRows();
             Toast.makeText(this, "已切到 " + model.mode.label, Toast.LENGTH_SHORT).show();
         }));
@@ -127,8 +126,7 @@ public class LayoutModeActivity extends Activity {
         row.addView(tv, new LinearLayout.LayoutParams(0, -2, 1f));
 
         row.setOnClickListener(v -> {
-            model.mode = m;
-            model.save();
+            model.switchMode(m);
             Toast.makeText(this, "布局：" + m.label, Toast.LENGTH_SHORT).show();
             setContentView(build());
         });
@@ -140,7 +138,7 @@ public class LayoutModeActivity extends Activity {
     }
 
     private View widgetRow(final int id) {
-        String[] names = {"时钟", "日期", "电量", "内存", "温度"};
+        String[] names = DesktopView.WIDGET_NAMES;
         boolean on = model.hasWidget(id);
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);

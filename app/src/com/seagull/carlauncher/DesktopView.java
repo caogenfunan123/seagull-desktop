@@ -66,7 +66,7 @@ public class DesktopView extends FrameLayout {
     private final Paint hiPaint = new Paint();
 
     /** 组件条槽位名（下标即 model 里的组件 id）。 */
-    private static final String[] WIDGET_NAMES =
+    public static final String[] WIDGET_NAMES =
             {"时钟", "日期", "电量", "内存", "天气", "歌词", "快捷栏"};
 
     public DesktopView(Context c, Host host) {
@@ -94,6 +94,7 @@ public class DesktopView extends FrameLayout {
         widgetStrip = new LinearLayout(getContext());
         widgetStrip.setOrientation(LinearLayout.HORIZONTAL);
         widgetStrip.setVisibility(GONE);
+        widgetStrip.setOnLongClickListener(v -> { widgetAddMenu(); return true; });
         mainCol.addView(widgetStrip, new LinearLayout.LayoutParams(-1, dp(96)));
 
         grid = new GridLayout(getContext());
@@ -138,6 +139,12 @@ public class DesktopView extends FrameLayout {
         addView(dragLayer, new FrameLayout.LayoutParams(-1, -1));
 
         setClipChildren(false);
+
+        // 桌面空白处长按 = 加组件（和长按组件条同一条路）
+        setOnLongClickListener(v -> {
+            if (dragView == null) widgetAddMenu();
+            return true;
+        });
     }
 
     /* ==================== 渲染 ==================== */
@@ -316,11 +323,101 @@ public class DesktopView extends FrameLayout {
         }
     }
 
+    /** 长按组件条：挑要加的组件（空位即已放满时全列出来）。 */
+    private void widgetAddMenu() {
+        LauncherModel m = model();
+        List<String> names = new ArrayList<>();
+        List<Integer> ids = new ArrayList<>();
+        for (int id = 0; id < WIDGET_NAMES.length; id++) {
+            if (m != null && m.hasWidget(id)) continue;
+            names.add("+ " + WIDGET_NAMES[id]);
+            ids.add(id);
+        }
+        if (names.isEmpty()) { host.onToast("组件都放满了（最多 " + LauncherModel.WIDGET_MAX + " 个）"); return; }
+        final String[] opts = names.toArray(new String[0]);
+        new AlertDialog.Builder(getContext())
+                .setTitle("加组件")
+                .setItems(opts, (d, which) -> {
+                    LauncherModel mm = model();
+                    if (mm == null) return;
+                    mm.toggleWidget(ids.get(which));
+                    refresh();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /** 长按组件条上某个组件：换位置 / 拿下来。 */
+    private void widgetMenu(final int id) {
+        final LauncherModel m = model();
+        if (m == null) return;
+        int i = m.widgets.indexOf(id);
+        List<String> opts = new ArrayList<>();
+        opts.add("拿下来");
+        if (i > 0) opts.add("往前挪");
+        if (i >= 0 && i < m.widgets.size() - 1) opts.add("往后挪");
+        new AlertDialog.Builder(getContext())
+                .setTitle(WIDGET_NAMES[id])
+                .setItems(opts.toArray(new String[0]), (d, which) -> {
+                    int at = m.widgets.indexOf(id);
+                    if (at < 0) return;
+                    if (which == 0) m.widgets.remove(at);
+                    else if (which == 1 && at > 0) { m.widgets.remove(at); m.widgets.add(at - 1, id); }
+                    else if (which == 2) { m.widgets.remove(at); m.widgets.add(at + 1, id); }
+                    m.save();
+                    refresh();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /** 长按快捷栏某格：换内容 / 清空。 */
+    private void quickSlotMenu(final int idx) {
+        final LauncherModel m = model();
+        if (m == null) return;
+        String cur = QuickBar.slotKey(m, idx);
+        String[] opts = {"清空", "选择应用…", "功能按钮…"};
+        new AlertDialog.Builder(getContext())
+                .setTitle("快捷栏第 " + (idx + 1) + " 格")
+                .setItems(opts, (d, which) -> {
+                    if (which == 0) { m.clearQuickSlot(idx); refresh(); return; }
+                    if (which == 1) {
+                        appPickDialog("选应用", a -> { m.setQuickSlot(idx, a.key(), a.label); refresh(); });
+                    } else {
+                        new AlertDialog.Builder(getContext())
+                                .setTitle("功能按钮")
+                                .setItems(QuickBar.FN_LABELS, (dd, j) -> {
+                                    m.setQuickSlot(idx, "@fn:" + QuickBar.FN_KEYS[j], QuickBar.FN_LABELS[j]);
+                                    refresh();
+                                })
+                                .setNegativeButton("取消", null)
+                                .show();
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
+        if (cur == null || cur.isEmpty()) host.onToast("空格点一下就能选");
+    }
+
+    private void appPickDialog(String title, final java.util.function.Consumer<LauncherModel.App> pick) {
+        final LauncherModel m = model();
+        if (m == null) return;
+        String[] labels = new String[m.allApps.size()];
+        for (int i = 0; i < labels.length; i++) labels[i] = m.allApps.get(i).label;
+        new AlertDialog.Builder(getContext())
+                .setTitle(title)
+                .setItems(labels, (d, which) -> pick.accept(m.allApps.get(which)))
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
     private View makeWidget(int id, LauncherModel m) {
+        if (id == 6) return quickBarWidget(m);
         LinearLayout box = new LinearLayout(getContext());
         box.setOrientation(LinearLayout.VERTICAL);
         box.setGravity(Gravity.CENTER);
         box.setBackgroundColor(getResources().getColor(R.color.panel, null));
+        box.setOnLongClickListener(v -> { widgetMenu(id); return true; });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1f);
         lp.setMargins(dp(4), 0, dp(4), 0);
         box.setLayoutParams(lp);
@@ -340,13 +437,32 @@ public class DesktopView extends FrameLayout {
             case 1: big.setText(SysOps.dateCn());     small.setText("日期"); break;
             case 2: big.setText(SysOps.batteryPct(getContext())); small.setText("电量"); break;
             case 3: big.setText(SysOps.memFree(getContext()));    small.setText("内存"); break;
-            // ponytail: 4/5/6 是天气、歌词、快捷栏，等各自模块落地后接真实取值
-            case 4: case 5: case 6: big.setText("待接入"); small.setText(WIDGET_NAMES[id]); break;
+            // ponytail: 4/5 是天气与歌词，等各自模块落地后接真实取值
+            case 4: case 5: big.setText("待接入"); small.setText(WIDGET_NAMES[id]); break;
             default: big.setText("—"); small.setText("空"); break;
         }
         box.addView(big);
         box.addView(small);
         return box;
+    }
+
+    /** 组件条里的快捷栏：整条展开成可点的格子。 */
+    private View quickBarWidget(LauncherModel m) {
+        LinearLayout wrap = new LinearLayout(getContext());
+        wrap.setOrientation(LinearLayout.VERTICAL);
+        wrap.setGravity(Gravity.CENTER);
+        wrap.setBackgroundColor(getResources().getColor(R.color.panel, null));
+        wrap.setOnLongClickListener(v -> { widgetMenu(6); return true; });
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1f);
+        lp.setMargins(dp(4), 0, dp(4), 0);
+        wrap.setLayoutParams(lp);
+
+        QuickBar.Host qh = new QuickBar.Host() {
+            @Override public LauncherModel model() { return DesktopView.this.model(); }
+            @Override public void onEditSlot(int idx) { quickSlotMenu(idx); }
+        };
+        wrap.addView(QuickBar.build(getContext(), qh), new LinearLayout.LayoutParams(-1, 0, 1f));
+        return wrap;
     }
 
     /* ==================== 图标 ==================== */
