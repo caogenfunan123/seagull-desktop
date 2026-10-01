@@ -28,7 +28,7 @@ import android.view.Surface;
  *   · MediaProjection 兜底：普通应用合法拿虚拟屏的正道，无 TRUSTED，
  *     Android 14 上 singleTask 目标可能被拉回主屏（有 ensureOnDisplay 自愈兜底）。
  */
-public final class MirrorSlot {
+public final class MirrorSlot implements CanvasSource {
 
     private static final String TAG = "SeagullMirror";
 
@@ -65,6 +65,15 @@ public final class MirrorSlot {
         this.name = name;
         // 给 PrivClient 一个上下文：守护进程靠 base.apk 路径拉起，早给早生效
         PrivClient.init(this.ctx);
+    }
+
+    /** 批次 N：触摸坐标映射。VD 模式恒等（1:1，scale 恒 1）；推流模式由外部换实现。 */
+    private volatile TouchTransformer transformer = TouchTransformer.identity();
+
+    /** 换坐标映射（DiPlay 推流模式预留）。切回 VD 传 identity()。 */
+    public void setTransformer(TouchTransformer t) {
+        transformer = (t != null) ? t : TouchTransformer.identity();
+        Log.i(TAG, "[" + name + "] 触摸映射 → " + transformer.describe());
     }
 
     public int displayId() { return displayId; }
@@ -187,7 +196,7 @@ public final class MirrorSlot {
             Log.w(TAG, "[" + name + "] 部署后自愈异常: " + t);
         }
 
-        touchFor().setDisplay(displayId, 1f);   // VD 与 surface 1:1，缩放固定 1
+        touchFor().setDisplay(displayId, transformer.scaleX());   // 批次 N：VD 恒等映射，scale 恒 1
         lastSig = sig;
         // ready 表示"可接收触摸"：建屏+搬应用成功即视为就绪（画面由 attachSurface 负责）
         ready = (surface == null) || surface.isValid();
@@ -266,7 +275,7 @@ public final class MirrorSlot {
     /** SurfaceView 触摸转发：点/滑/长按都交给 TouchForward（12.1）。 */
     public void onTouch(MotionEvent e) {
         if (displayId <= 0) return;
-        touchFor().setDisplay(displayId, 1f);
+        touchFor().setDisplay(displayId, transformer.scaleX());
         touchFor().feed(e);
     }
 

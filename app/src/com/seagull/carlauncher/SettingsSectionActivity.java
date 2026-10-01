@@ -666,7 +666,14 @@ public class SettingsSectionActivity extends BaseActivity {
         note("车载蓝牙歌词走媒体信息，不需通知权限。歌词组件在组件条里，菜园里也会显示同一份。");
     }
 
-    private static String offsetLabel(int ms) {
+    private String splitLabel() {
+        if (model.pipWeightA == 1 && model.pipWeightB == 1) return "1:1 等分";
+        if (model.pipWeightA == 3 && model.pipWeightB == 2) return "3:2 左大";
+        if (model.pipWeightA == 2 && model.pipWeightB == 3) return "2:3 右大";
+        return model.pipWeightA + ":" + model.pipWeightB;
+    }
+
+    private String offsetLabel(int ms) {
         if (ms == 0) return "0";
         return (ms > 0 ? "+" : "") + (ms / 1000f) + " 秒";
     }
@@ -693,6 +700,19 @@ public class SettingsSectionActivity extends BaseActivity {
         sliderRow("后台保留几个窗口", 0, 3, model.bgKeep, " 个", v -> { model.bgKeep = v; });
         toggleRow("锁屏后释放画中画", model.releaseOnLock, () -> { model.releaseOnLock = !model.releaseOnLock; });
         toggleRow("息屏暂停", model.pauseOnScreenOff, () -> { model.pauseOnScreenOff = !model.pauseOnScreenOff; });
+        choiceRow("画中画分割", splitLabel(), () -> {
+            String[] names = {"1:1 等分", "3:2 左大", "2:3 右大"};
+            int[] wa = {1, 3, 2}, wb = {1, 2, 3};
+            int def = 0;
+            for (int i = 0; i < wa.length; i++) {
+                if (model.pipWeightA == wa[i] && model.pipWeightB == wb[i]) def = i;
+            }
+            choiceDialog("画中画分割", names, def, i -> {
+                model.pipWeightA = wa[i];
+                model.pipWeightB = wb[i];
+                model.save(); render();
+            });
+        });
         note("默认显示大小与每应用独立缩放需要虚拟屏（L3），普通应用被系统拒绝，公开版不提供。");
 
         sectionLabel("窗口搬运（需 root）");

@@ -54,7 +54,12 @@ app/
     TouchForward.java          触摸转发（双通道：守护中继 / input 命令）
     MirrorSlot.java            虚拟屏镜像槽（两块；TRUSTED 优先 + 投影兜底 + 1:1）
     MirrorHost.java            画中画槽进程级持有者：退出页面不断屏、桌面自愈、清空入口
-    PipBoard.java              画中画面板：左右两块画布 + 长按选应用 + 部署/授权/自愈（HomeActivity 与 MirrorActivity 共用）
+    PipBoard.java              画中画面板：单焦点/卡片化/空态大按钮/环境光遮罩 + 部署/授权/自愈（HomeActivity 与 MirrorActivity 共用）
+    MiniPlayer.java            36dp 媒体条（三键 + 热区外扩 + 会话不活跃隐藏）
+    MediaListenerService.java  媒体会话快照 + transport control（MiniPlayer 数据源，通知监听器 getActiveSessions）
+    CanvasSource.java          画布数据源接口（MirrorSlot 已实现；StreamCanvasSource 占位）
+    TouchTransformer.java      画布→显示坐标缩放（identity 恒 1 / scaling 等比 + 零保护，纯 JVM 可自检）
+    StreamCanvasSource.java    DiPlay 推流占位（全抛 UnsupportedOperation，下一批实现）
     MirrorActivity.java        画中画薄壳（躯干=PipBoard）：Dock 投应用入口 + SelfTestMirror 自检
     TrustedFlags.java          TRUSTED 屏 flag 候选/规范化/受信位校验
     StackScan.java             am stack list 解析：任务在哪个屏（纯 JVM，可自检）
@@ -110,7 +115,14 @@ VD 一旦 `release()`，系统会把屏上的任务倒回默认屏 —— 桌面
 `detachSurface()`；拆屏的唯一入口是 `MirrorHost.clear()`
 （长按 → 清空该槽，会 force-stop 画中画里的应用）。
 
-### 4.5 签名：每个包必须是同一把钥匙
+### 4.5 画中画：触摸只进焦点画布，切换必须补 CANCEL
+
+CarPlay 纪律（批次 N）：非焦点画布的第一下触摸只切焦点，**不吃进 App**；
+切换瞬间给刚失焦的画布补 `ACTION_CANCEL`（`cancelStroke`）——否则多指
+（一指拖着左画布、二指点右画布）会留下鬼拖痕。空画布例外：没有 App 可
+误触，第一下直接弹选择器（可发现性优先）。
+
+### 4.6 签名：每个包必须是同一把钥匙
 
 build.sh 找不到 `keystore/seagull-release.keystore` 会现场生成临时密钥，
 签名每次都不同 → 覆盖安装报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`。

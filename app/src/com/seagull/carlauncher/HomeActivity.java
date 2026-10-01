@@ -50,6 +50,7 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
 
     private DesktopView desktop;
     private PipBoard pip;
+    private MiniPlayer mini;
     /** true = 首屏画中画（默认）；false = 桌面网格。底栏按钮切换。 */
     private boolean pipMode = true;
     private LinearLayout topBar, bottomBar, mainCol;
@@ -68,6 +69,7 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         buildBottomBar();
         // 首屏是画中画：桌面网格等切过去再刷（toggleMode 里会刷）
         if (!pipMode) desktop.refresh();
+        refreshMini();
         ui.postDelayed(tick, 30_000L);
     }
 
@@ -130,6 +132,7 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         Weather.arm(this);          // 20 分钟一次；数据过期时立刻取
         Lyrics.start(this);         // 一秒一跳，组件条/菜园的歌词都从它出
         Lyrics.addSink(islandSink);
+        refreshMini();              // 媒体条跟着会话状态走（没会话整条隐藏）
         // 常驻画中画被系统拉回主屏时搬回去（批次 L；节流在 MirrorHost 里）
         MirrorHost.healHome(this);
         TaskEngine.fireDesktop(this);   // 13.2 桌面启动触发（同进程只跑一次）
@@ -143,12 +146,13 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         }
     };
 
-    /** 主题 / 壁纸 / 字号变了才重画，避免每次回桌面都闪一下。 */
+    /** 主题 / 壁纸 / 字号 / 画布权重变了才重画，避免每次回桌面都闪一下。 */
     private String skinSignature() {
         if (model == null) return "";
         return model.themeId + "|" + model.customAccent + "|" + model.dayNight
                 + "|" + model.wallDay + "|" + model.wallNight + "|" + model.wallDim
-                + "|" + model.fontScale + "|" + SysOps.clockHHmm().substring(0, 2);
+                + "|" + model.fontScale + "|" + model.pipWeightA + ":" + model.pipWeightB
+                + "|" + SysOps.clockHHmm().substring(0, 2);
     }
 
     @Override protected void onDestroy() {
@@ -166,6 +170,7 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
             } else if (desktop != null) {
                 desktop.refresh();
             }
+            refreshMini();   // 30s 一次兜底扫描；播放态变化有 MediaController 回调即时刷
             ui.postDelayed(this, 30_000L);
         }
     };
@@ -198,7 +203,7 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         mainCol.addView(topBar, new LinearLayout.LayoutParams(-1, dp(58)));
 
         desktop = new DesktopView(this, this);
-        pip = new PipBoard(this, slot -> PipBoard.showPicker(this, slot, pip));
+        pip = new PipBoard(this, slot -> PipBoard.showPicker(this, slot, pip), true, model);
         content = new FrameLayout(this);
         content.addView(desktop, new FrameLayout.LayoutParams(-1, -1));
         content.addView(pip, new FrameLayout.LayoutParams(-1, -1));
@@ -210,6 +215,11 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         bottomBar.setBackgroundColor(Skin.bar(R.color.panel));
         bottomBar.setPadding(dp(10), dp(8), dp(10), dp(8));
         mainCol.addView(bottomBar, new LinearLayout.LayoutParams(-1, dp(62)));
+
+        // 常驻媒体条（批次 N）：层级在画布之上、底栏之下，没媒体会话时整条隐藏
+        mini = new MiniPlayer(this);
+        mini.setOnInfoClick(this::focusMediaCanvas);
+        mainCol.addView(mini, new LinearLayout.LayoutParams(-1, dp(36)));
 
         // 野菜岛：顶部居中的胶囊，浮在桌面上（不进 mainCol，免得被布局挤动）
         island = new IslandView(this);
@@ -252,6 +262,27 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
     }
 
     /**
+     * MiniPlayer 空白区点击（批次 N 拍板的双场景规则）：
+     *   · 场景 A：媒体源正在画布里 → 导焦到那块画布（不新开页面）；
+     *   · 场景 B：媒体源在后台（没进画中画）→ 什么都不做，不挤占当前应用。
+     * 播放控制键不经过这里（MiniPlayer 直接对媒体会话下发 transport control）。
+     */
+    private void focusMediaCanvas() {
+        MediaListenerService.Snap s = MediaListenerService.snap();
+        if (s == null || s.pkg == null || s.pkg.isEmpty()) return;
+        if (pip == null) return;
+        if (s.pkg.equals(PipBoard.loadPkg(this, 1))) pip.focusSlot(1);
+        else if (s.pkg.equals(PipBoard.loadPkg(this, 2))) pip.focusSlot(2);
+    }
+
+    /** 刷媒体条：没会话 → 整条隐藏不占位。 */
+    private void refreshMini() {
+        if (mini == null) return;
+        MediaListenerService.refresh(this);
+        mini.bind(MediaListenerService.snap());
+    }
+
+    /**
      * 壁纸铺底 + 背景遮罩（TODO P0-7）。
      * 遮罩层加在 root 的最底层，mainCol 透明，就能透出壁纸。
      */
@@ -285,20 +316,36 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
 
     private void buildTopBar() {
         if (topBar == null) return;
+        // 批次 N：画中画模式顶栏压到 40dp，垂直空间让给画布（CarPlay 纪律：chrome 不挤内容）
+        topBar.setLayoutParams(new LinearLayout.LayoutParams(-1, dp(pipMode ? 40 : 58)));
+        int pv = dp(pipMode ? 6 : 10);
+        topBar.setPadding(dp(14), pv, dp(14), pv);
         // 顶部信息栏关掉时，时间挪到 Dock（TODO P0-8 7.11 / 7.12）
         topBar.setVisibility(model.topInfoBar ? View.VISIBLE : View.GONE);
         if (model.topInfoBar) buildInfoBar();
         else model.dockShowClock = true;
     }
 
+    /**
+     * 信息栏（批次 N）：画中画模式只留 时间 + 设置（用户：主驾场景优先，管理功能下沉）；
+     * 桌面模式才给全量（日期/整理/搜索/设置）。
+     */
     private void buildInfoBar() {
         topBar.removeAllViews();
 
         TextView clock = new TextView(this);
         clock.setText(SysOps.clockHHmm());
         clock.setTextColor(Skin.c(R.color.text));
-        clock.setTextSize(20);
+        clock.setTextSize(pipMode ? 17 : 20);
         topBar.addView(clock);
+
+        if (pipMode) {
+            View spacer = new View(this);
+            topBar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+            topBar.addView(chipBtn("设置", v ->
+                    startActivity(new Intent(this, SettingsHubActivity.class))));
+            return;
+        }
 
         TextView date = new TextView(this);
         date.setText("   " + SysOps.dateCn());
@@ -316,8 +363,6 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         edit.setTextSize(13);
         edit.setPadding(dp(12), dp(7), dp(12), dp(7));
         edit.setBackgroundColor(Skin.c(R.color.card));
-        // 整理只对桌面网格有意义；画中画首屏时藏起来
-        edit.setVisibility(pipMode ? View.GONE : View.VISIBLE);
         edit.setOnClickListener(v -> {
             desktop.editMode = !desktop.editMode;
             buildTopBar();
@@ -327,29 +372,24 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         });
         topBar.addView(edit);
 
-        TextView search = new TextView(this);
-        search.setText("搜索");
-        search.setTextColor(Skin.c(R.color.text));
-        search.setTextSize(13);
-        search.setPadding(dp(12), dp(7), dp(12), dp(7));
-        search.setBackgroundColor(Skin.c(R.color.card));
-        LinearLayout.LayoutParams scp = new LinearLayout.LayoutParams(-2, -2);
-        scp.leftMargin = dp(8);
-        search.setLayoutParams(scp);
-        search.setOnClickListener(v -> startActivity(new Intent(this, SearchActivity.class)));
-        topBar.addView(search);
+        topBar.addView(chipBtn("搜索", v -> startActivity(new Intent(this, SearchActivity.class))));
+        topBar.addView(chipBtn("设置", v ->
+                startActivity(new Intent(this, SettingsHubActivity.class))));
+    }
 
-        TextView set = new TextView(this);
-        set.setText("设置");
-        set.setTextColor(Skin.c(R.color.text));
-        set.setTextSize(13);
-        set.setPadding(dp(12), dp(7), dp(12), dp(7));
-        set.setBackgroundColor(Skin.c(R.color.card));
-        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-2, -2);
-        sp.leftMargin = dp(8);
-        set.setLayoutParams(sp);
-        set.setOnClickListener(v -> startActivity(new Intent(this, SettingsHubActivity.class)));
-        topBar.addView(set);
+    /** 顶栏胶囊按钮（搜索/设置）。 */
+    private View chipBtn(String label, View.OnClickListener l) {
+        TextView tv = new TextView(this);
+        tv.setText(label);
+        tv.setTextColor(Skin.c(R.color.text));
+        tv.setTextSize(13);
+        tv.setPadding(dp(12), dp(7), dp(12), dp(7));
+        tv.setBackgroundColor(Skin.c(R.color.card));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+        lp.leftMargin = dp(8);
+        tv.setLayoutParams(lp);
+        tv.setOnClickListener(l);
+        return tv;
     }
 
     /**

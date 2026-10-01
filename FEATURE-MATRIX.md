@@ -242,6 +242,13 @@
 | 11.2 | 虚拟屏窗口（L3，root） | 🟡 | TRUSTED 屏优先（角色授予 + 5 组 flag 候选 + 受信位 1<<7 校验），失败回落 MediaProjection PUBLIC\|OWN_CONTENT_ONLY\|PRESENTATION。**批次 M 起画中画是首屏**：HomeActivity 内容层 PipBoard ⇄ DesktopView 二选一，进应用默认画中画，桌面网格降为次级层（底栏按钮切回）；VD 按画布像素 1:1；flags 0x18800000 + `--user 0`；**进程级常驻：退出页面只断 Surface 不拆屏**（拆屏会把任务倒回主屏冒全屏，正是"进入桌面还是应用界面"的根因）；搬完立即自愈 + 桌面 resume 自愈（3s 节流） |
 | 11.2a | 画中画左右分割 | ✅ | 批次 M：PipBoard 两块画布左右各 weight 1（用户"画中画左右分割"）；旧版上下半屏已废弃 |
 | 11.2b | 桌面默认横屏 | ✅ | `LauncherModel.orientation` 默认 LANDSCAPE（用户"桌面默认横屏"），设置 → 显示 可改 |
+| 11.2c | 单焦点 + CANCEL 补发 | ✅ | 批次 N（CarPlay 纪律）：非焦点画布的第一下触摸只切焦点不吃进 App；切换瞬间给失焦画布补 `ACTION_CANCEL`，多指鬼拖痕（一指拖左画布、二指点右画布）靠它掐；守护中继通道才会发 CANCEL，root `input` 命令通道丢弃 |
+| 11.2d | 空态大按钮 | ✅ | 批次 N：≥80dp 高 + 16dp 圆角 + 半透明白描边，点一下直接弹选择器（空画布无 App 可误触）；长按仍是更换应用 |
+| 11.2e | 卡片化画布 | 🟡 | 批次 N：深色卡底 + 1px 白描边 + 8dp 缝，卡 padding 12dp 预留真圆角；真圆角暂缓（SurfaceView 窗外合成，`clipToOutline` 部分设备失效，TextureView 顺滑度不划算） |
+| 11.2f | 非焦点遮罩跟环境光 | ✅ | 批次 N：`TYPE_LIGHT` 采样（公开 API 免权限）+ 低通 + 20/2000 lux 回差，黑遮罩三档 0.45 夜 / 0.35 常 / 0.28 强光 |
+| 11.2g | MiniPlayer 媒体条 | ✅ | 批次 N：36dp 常驻（只有上一首/播放/下一首，热区外扩 12dp），会话不活跃整条隐藏；数据源复用通知监听器 `getActiveSessions` 不加权限；空白区点击双场景 —— 媒体源在画布内→导焦，在后台→什么都不做 |
+| 11.2h | 画中画分割比例 | 🟡 | 批次 N：`pipWeightA/pipWeightB` 默认 1:1（钳 1~10），设置 → 窗口 三选一；权重变 VD 尺寸跟着变仍 1:1；默认预设 7:3/3:7 下一批 |
+| 11.2i | DiPlay 推流接入 | ⛔ | C 层已埋接口（`CanvasSource`/`StreamCanvasSource`/`TouchTransformer`，identity 恒 1 不变行为），解码帧写 Surface + 画布像素→iPhone 分辨率缩放未接（下一批） |
 | 11.3 | 每格绑应用 | ✅ | 镜像两槽各绑一个包名，存 `mirrorPkg1/2` |
 | 11.4 | 各应用显示大小（独立 dpi） | ⛔ | `setDisplayId` 被拒 |
 | 11.5 | 默认显示大小 | ⛔ | 同上 |

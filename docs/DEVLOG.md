@@ -522,3 +522,61 @@ TrustedFlagsCheck 10 项、StackListCheck 12 项输入未动；VD 常驻、部�
 - 遗留：真机三问照旧（TRUSTED 角色是否授到 / SELinux / moveRootTaskToDisplay），
   要用户回传 logcat（`SeagullRootOps` 的"TRUSTED 角色授予"行 +
   `dumpsys display` 的 seagull-pipN flags）。
+
+## 批次 N — CarPlay 纪律移植：单焦点 / 卡片化 / 空态大按钮 / MiniPlayer（C 层只埋接口）
+
+**目标**：用户拿来苹果 CarPlay 互联界面设计思路做参照，拍板四条移植：
+单焦点（触摸只进焦点画布）、圆角暂缓改视觉卡片化、MiniPlayer 双场景点击规则、
+分割比例锁 1:1 但权重配置化；另按"埋接口不接线"节奏给 DiPlay 推流铺路。
+
+**改动**
+
+- `PipBoard` 重写（A 层，用户四条车机交互修复）：
+  - **单焦点**（安全红线）：非焦点画布的第一下触摸只切焦点不吃进 App；
+    切换瞬间给刚失焦的画布补 `ACTION_CANCEL`（`cancelStroke`）——多指场景
+    （一指拖着左画布、二指点右画布）的鬼拖痕全靠它掐掉。守护中继通道会
+    把 CANCEL 真的送进 App，命令通道本来就丢弃 CANCEL（TouchForward.java:139）。
+  - **空态大按钮**：≥80dp 高、16dp 圆角、半透明白描边、「＋ 选择应用」
+    上下排布；点一下直接弹选择器（空画布没有 App 可误触，可发现性优先于
+    焦点语义），长按仍是"更换应用"；按下态 alpha 0.6 兜底车机无震动马达。
+  - **卡片化**：深色卡底 + 1px 半透明白描边 + 8dp 缝；卡底比画布大出
+    CARD_PAD=12dp，将来开真圆角不露黑边。**圆角暂缓**：SurfaceView 是
+    窗外合成，`clipToOutline` 圆角裁剪在部分设备失效，换 TextureView 又
+    划不来（GPU 拷贝+延迟），本批方角。
+  - **环境光三档遮罩**：非焦点画布盖黑，透明度跟 `SensorManager.TYPE_LIGHT`
+    （公开 API 不要权限）：夜间 0.45 / 常态 0.35 / 白天强光 0.28，1s 采样
+    + 低通 + 20/2000 lux 带回差，不每帧动 alpha。
+- `MiniPlayer` 新文件（B 层）：36dp 常驻媒体条，层级在画布之上、底栏之下；
+  只有上一首/播放暂停/下一首三个按钮（热区 TouchDelegate 外扩 12dp，探出
+  36dp 条身）；没有进度条没有封面；媒体会话不活跃时整条隐藏不占位。
+  数据源走 `MediaSessionManager.getActiveSessions`（MediaListenerService
+  就是已启用的通知监听器，不另起服务不加权限）， transport control 直接
+  对会话下发，不经过画布。
+  **双场景点击规则**（用户拍板）：媒体源在画布里 → 空白区点击导焦到那块
+  画布；媒体源在后台（没进画中画）→ 什么都不做，绝不挤占当前应用。
+- `HomeActivity`：顶栏画中画模式压到 40dp 且只留 时间+设置（搜索/整理/
+  日期全部下沉到桌面模式或应用页）；MiniPlayer 接线；30s tick 兜底扫会话。
+- `LauncherModel`：新增 `pipWeightA/pipWeightB`（默认 1:1，钳制 1~10），
+  设置 → 窗口 → 「画中画分割」三选一；权重变→VD 尺寸跟着变，保持 1:1。
+  skinSignature 带上权重，改了立刻整屏重画。
+- C 层（只埋接口不接线）：`CanvasSource`（MirrorSlot 本来就实现这四个
+  方法，implements 上去零逻辑变化）、`StreamCanvasSource` 空实现占位、
+  `TouchTransformer`（identity/scaling 两静态工厂）+ MirrorSlot 的
+  `setDisplay(displayId, transformer.scaleX())` 一行接线（identity 恒 1，
+  行为与批次 M 完全一致）+ `TransformCheck` 自检 21 项纯 JVM 全过。
+
+**验证**：`typecheck.sh` 通过；`TransformCheck`（恒等/等比/零保护/负数/
+describe）全过。VD 常驻、部署串行化等链路与批次 M/L 一致，未动输入。
+
+**复盘**
+
+- 做对：把"非焦点拦截所有触摸"和"最后触摸的画布获焦点"的矛盾显式收敛成
+  "第一下只切焦点"—— CarPlay 同样行为；空画布单独留"直接选应用"的口子，
+  没让安全规则把可发现性堵死。
+- 决策：SurfaceView 方角是性能换正确性——画中画要 30~60fps 跟手，圆角
+  等真机验证 TextureView 再说。
+- 决策：MiniPlayer 数据源复用通知监听器拿 `getActiveSessions`，没新起
+  服务没新权限——车机上多一个常驻服务就多一个被杀的理由。
+- 遗留：DiPlay 推流接入时要实现 StreamCanvasSource（解码帧写 Surface）
+  + ScalingTransformer（画布像素→iPhone 分辨率），并给多指中继补缩放链
+  路的自检；VD 与推流混排的默认权重预设（7:3 / 3:7）下一批做。

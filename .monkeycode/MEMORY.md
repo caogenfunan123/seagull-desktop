@@ -59,6 +59,18 @@ Entries discovered by the Agent during task execution should follow this format:
   - 桌面网格这些既有界面降为次级层（底栏按钮切换），不砍功能，但把只服务画中画的子页面入口（底栏"镜像小窗"）删掉，含义不明的按钮（"叶"键）也删
   - 以后新增"画中画相关"界面优先做成可复用 View（PipBoard）嵌进首屏，不要再开新 Activity 当子页面
 
+[CarPlay 纪律移植：单焦点/卡片化/空态/MiniPlayer]
+- Date: 2026-10-01
+- Context: 用户拿来苹果 CarPlay 互联界面作参照，拍板四条移植（批次 N）
+- Instructions:
+  - 触摸只进焦点画布：非焦点画布的第一下触摸只切焦点不吃进 App；切换瞬间给失焦画布补 ACTION_CANCEL（多指鬼拖痕靠它）
+  - 空画布例外：没有 App 可误触，第一下直接弹选择器（可发现性优先于焦点语义）
+  - 空态大按钮 ≥80dp 高 + 16dp 圆角 + 半透明白描边；按下态 alpha 0.6 兜底（车机无震动马达）
+  - SurfaceView 是窗外合成，clipToOutline 圆角裁剪部分设备失效——卡片化只做卡底+描边+缝，真圆角等 TextureView 实测
+  - 非焦点画布黑遮罩跟环境光三档：TYPE_LIGHT 采样（公开 API 免权限）+ 1s 低通 + 20/2000lux 回差
+  - MiniPlayer 双场景点击规则：媒体源在画布内→导焦，在后台→什么都不做（绝不挤占当前应用）
+  - 分割权重锁 1:1 但配置化（pipWeightA/pipWeightB）；DiPlay 接入走"埋接口不接线"节奏
+
 [Project Knowledge Summary]
 - Date: 2026-10-01
 - Context: Discovered by Agent while fixing "每次进入桌面还是应用界面"（批次 L）
@@ -67,3 +79,12 @@ Entries discovered by the Agent during task execution should follow this format:
   - 退出镜像页拆屏（vd.release）会把屏上任务倒回默认屏，桌面立刻冒出全屏应用——这是该抱怨的直接机制
   - 因此 VD 生命周期挂进程级 MirrorHost，退出只 detachSurface；只有"清空该槽"才拆屏+force-stop
   - 旧 CI 未配签名 secret 时每次构建随机生成密钥，两次产物证书 SHA-256 不同；用户每次装新包都要卸载
+
+[Project Knowledge Summary]
+- Date: 2026-10-01
+- Context: Discovered by Agent while verifying cancelStroke in batch N
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - ACTION_CANCEL 精准送进画中画 App 只有一条路：守护中继通道（TouchForward DaemonSink）；root `input` 命令通道的 swipe 手势不可收回
+  - MediaSessionManager.getActiveSessions 要求调用方是已启用的通知监听器——MediaListenerService 正合适，MiniPlayer 数据源复用它，不另起服务不加权限
+  - SensorManager.TYPE_LIGHT 是公开 API 且不需要权限，环境光三档遮罩用它，不用 SensorPrivacyManager

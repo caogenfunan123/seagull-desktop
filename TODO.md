@@ -209,6 +209,18 @@
 - [x] 同槽部署/挂面串行化（`synchronized (slot)`），防并行双建 VD
 - [ ] 用户验收：进应用首屏是不是画中画；切「桌面」网格正常；横屏下车机/手机都正常
 
+### P2-8 CarPlay 纪律移植：单焦点 / 卡片化 / 空态 / MiniPlayer（批次 N）
+- [x] **单焦点**（车机交互安全红线）：非焦点画布第一下触摸只切焦点不吃进 App；切换瞬间给失焦画布补 `ACTION_CANCEL`（多指鬼拖痕）；input 子命令通道不发 CANCEL，守护中继通道才会 —— 中继优先再添一实据
+- [x] **空态大按钮**：≥80dp 高 + 16dp 圆角 + 半透明白描边，点一下直接弹选择器（空画布无 App 可误触）；长按仍是更换应用
+- [x] **卡片化**（圆角暂缓）：深色卡底 + 1px 半透明白描边 + 8dp 缝；SurfaceView 窗外致 `clipToOutline` 圆角裁剪部分设备失效，换 TextureView 顺滑度不划算，方角+描边，卡 padding 12dp 预留真圆角
+- [x] **环境光三档遮罩**：TYPE_LIGHT 采样（公开 API 免权限）+ 低通 + 20/2000 lux 回差，非焦点画布黑遮罩 0.45/0.35/0.28
+- [x] **顶栏精简**：画中画模式压 40dp 只留 时间+设置；搜索/日期/整理下沉桌面模式
+- [x] **MiniPlayer**：36dp 媒体条（只有上一首/播放/下一首，热区外扩 12dp），媒体会话不活跃则整条隐藏；数据源复用通知监听器 `getActiveSessions`，不新起服务不加权限；空白区点击双场景规则 —— 媒体源在画布内→导焦，在后台→什么都不做
+- [x] **画布权重配置化**：`LauncherModel.pipWeightA/pipWeightB` 默认 1:1（钳 1~10），设置 → 窗口 →「画中画分割」三选一；权重变 → VD 尺寸跟着变仍 1:1
+- [x] C 层只埋接口不接线：`CanvasSource` 接口 + `StreamCanvasSource` 占位 + `MirrorSlot implements CanvasSource` + `TouchTransformer`（`setDisplay(displayId, scaleX)`，identity 恒 1 与批次 M 行为一致）+ `TransformCheck` 21 项纯 JVM 自检全过
+- [ ] 用户验收：单画布焦点切换跟手、空态按钮弹选择器、MiniPlayer 三键控音乐/双场景点击；切分割比例后 VD 尺寸变化
+- [ ] **下一批**：DiPlay 推流接入（StreamCanvasSource 写解码帧 + ScalingTransformer 画布像素→iPhone 分辨率）、多指中继补缩放链自检、默认权重预设 7:3/3:7
+
 ---
 
 ## 明确不做
