@@ -132,3 +132,13 @@ Entries discovered by the Agent during task execution should follow this format:
   - dumpsys display | grep -i virtual 数虚拟屏条数是"两块画布是否真的独立 VD"的唯一硬性验收（seagull-pip1/pip2 各一条）
   - SurfaceView 上的覆盖层控件一律克制：非焦点画布只留环境光遮罩+焦点描边，用户明确反感"点击接管"这类提示控件
   - 共享受限资源（录屏投影/相机/麦克风）在多槽架构里必须逐槽独占，写完两槽代码要自问"这个 session 允许几个实例"
+
+[Project Knowledge Summary]
+- Date: 2026-10-01
+- Context: Discovered by Agent while building the seagull-pip-lab replica repo (new GitHub repo from scratch)
+- Category: Environment Configuration
+- Instructions:
+  - 本环境 git credential helper（/app/agent/bin/agent git-credential-helper）会间歇返回 `server returned status 500`：此时 `git push`/`git credential fill` 全挂，但 `gh repo create --push`（用 gh 自身鉴权）照样能用。补救推送不把 token 写进 .git/config：`git -c credential.helper= push https://x-access-token:$TOKEN@github.com/<repo>.git main:main`
+  - PAT 从 /root/.git-credentials 现取：`sed -nE 's#https://[^:]+:([^@]+)@github.com.*#\1#p' /root/.git-credentials`；注意 api.github.com 上直接 curl 会 SSL_ERROR_SYSCALL，一律走 `export GH_TOKEN=... && gh ...`
+  - 新仓要从零建 GitHub 仓库 + CI：`gh repo create caogenfunan123/<name> --private --source=<dir> --push`，再拷主项目 .github/workflows/build-apk.yml 改产物名；签名密钥统一靠 secret：`base64 -w0 <keystore> | gh secret set SEAGULL_KEYSTORE_B64 --repo <repo>`、密码同样 `gh secret set`，不要回显
+  - 本地没有 aapt2/SDK 全量，只能做 javac 类型检查（/tmp/opencode/android-sdk/platforms/android-33.jar）；资源引用错误（如 @color/xxx 没定义、@string 名字不匹配）只能等 CI 才发现，所以写完 res 后必须逐个 grep manifest/values 交叉核对
