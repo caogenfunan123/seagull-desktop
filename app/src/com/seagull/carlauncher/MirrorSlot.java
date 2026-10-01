@@ -5,7 +5,6 @@ import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.projection.MediaProjection;
 import android.os.Handler;
-import android.os.HandlerThread;
 import android.os.Looper;
 import android.util.Log;
 import android.view.MotionEvent;
@@ -42,11 +41,16 @@ public final class MirrorSlot {
     private String lastSig = "";
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private HandlerThread touchThread;
-    private Handler touchHandler;
+    /** 触摸转发交给 TouchForward（跟手/防误滑/长按/排障都在里面）。 */
+    private TouchForward touch;
 
-    private float downX, downY;
-    private long downAt;
+    private TouchForward touchFor() {
+        if (touch == null) {
+            LauncherModel m = new LauncherModel(ctx);
+            touch = new TouchForward(m.touchThreshold, m.longPressMs, m.touchFollow);
+        }
+        return touch;
+    }
 
     public MirrorSlot(Context ctx, String name) {
         this.ctx = ctx;
@@ -135,11 +139,7 @@ public final class MirrorSlot {
         boolean ok = RootOps.launchOnDisplay(ctx, pkg, displayId);
         if (!ok) { lastError = "am start --display " + displayId + " 失败"; teardownVd(); return false; }
 
-        if (touchThread == null) {
-            touchThread = new HandlerThread("SeagullTouch-" + name);
-            touchThread.start();
-            touchHandler = new Handler(touchThread.getLooper());
-        }
+        touchFor().setDisplay(displayId, 1f);   // VD 与 surface 1:1，缩放固定 1
         lastSig = sig;
         // ready 表示"可接收触摸"：建屏+搬应用成功即视为就绪（画面由 attachSurface 负责）
         ready = (surface != null && surface.isValid());
@@ -171,41 +171,11 @@ public final class MirrorSlot {
 
     /* ---------------- 触摸回注 ---------------- */
 
-    /**
-     * SurfaceView 触摸转发。坐标即虚拟屏像素（VD 按 surface 尺寸建，1:1，无坐标偏移）。
-     * 修正了参考实现的两个坑：ACTION_CANCEL 显式丢弃、注入串行化（单线程队列）。
-     */
+    /** SurfaceView 触摸转发：点/滑/长按都交给 TouchForward（12.1）。 */
     public void onTouch(MotionEvent e) {
         if (displayId <= 0) return;
-        switch (e.getActionMasked()) {
-            case MotionEvent.ACTION_DOWN:
-                downX = e.getX();
-                downY = e.getY();
-                downAt = e.getEventTime();
-                break;
-            case MotionEvent.ACTION_UP: {
-                int id = displayId;
-                Handler h = touchHandler;
-                if (h == null || id <= 0) return;
-                final String cmd;
-                if (Math.abs(e.getX() - downX) >= 10 || Math.abs(e.getY() - downY) >= 10) {
-                    long dur = e.getEventTime() - downAt;
-                    if (dur < 50) dur = 50;
-                    if (dur > 2000) dur = 2000;
-                    cmd = "swipe " + (int) downX + " " + (int) downY + " "
-                            + (int) e.getX() + " " + (int) e.getY() + " " + dur;
-                } else {
-                    cmd = "tap " + (int) e.getX() + " " + (int) e.getY();
-                }
-                h.post(() -> RootOps.injectTouch(id, cmd));
-                break;
-            }
-            case MotionEvent.ACTION_CANCEL:
-                // 修正：丢弃本次，不注入也不残留（参考实现漏了这条 → 偶发吞点击）
-                break;
-            default:
-                break;
-        }
+        touchFor().setDisplay(displayId, 1f);
+        touchFor().feed(e);
     }
 
     /* ---------------- 生命周期 ---------------- */
@@ -228,10 +198,9 @@ public final class MirrorSlot {
 
     public void teardown() {
         teardownVd();
-        if (touchThread != null) {
-            touchThread.quitSafely();
-            touchThread = null;
-            touchHandler = null;
+        if (touch != null) {
+            touch.shutdown();
+            touch = null;
         }
     }
 

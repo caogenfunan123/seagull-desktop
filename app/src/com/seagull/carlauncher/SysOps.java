@@ -174,6 +174,56 @@ public final class SysOps {
         } catch (Throwable t) { return "—"; }
     }
 
+    /**
+     * 15.10 CPU 占用：读 /proc/stat 的两次采样差。
+     * 免 root、免依赖，两行就够；拿不到（个别 ROM 禁读）就回 "—"。
+     */
+    public static String cpuPct() {
+        long[] a = cpuStat();
+        if (a == null) return "—";
+        try { Thread.sleep(120); } catch (Throwable ignore) {}   // 采样间隔，太短算出来全是 0
+        long[] b = cpuStat();
+        if (b == null) return "—";
+        long idle = (b[0] - a[0]) + (b[1] - a[1]);
+        long total = 0;
+        for (int i = 0; i < b.length; i++) total += b[i] - a[i];
+        if (total <= 0) return "—";
+        return Math.round(100f * (total - idle) / total) + "%";
+    }
+
+    /** 返回 [idle, iowait, user, nice, system, idle, irq, softirq, steal...] */
+    private static long[] cpuStat() {
+        try {
+            java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader("/proc/stat"));
+            String line = r.readLine();
+            r.close();
+            if (line == null || !line.startsWith("cpu ")) return null;
+            String[] parts = line.trim().split("\\s+");
+            long[] v = new long[parts.length - 1];
+            for (int i = 1; i < parts.length; i++) v[i - 1] = Long.parseLong(parts[i]);
+            return v;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 15.10 一行监控：CPU / 温度 / 内存。 */
+    public static String monitorLine(Context ctx) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("CPU ").append(cpuPct());
+        String t = tempC();
+        if (!"—".equals(t)) sb.append(" · ").append(t);
+        try {
+            android.app.ActivityManager am = (android.app.ActivityManager)
+                    ctx.getSystemService(Context.ACTIVITY_SERVICE);
+            android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo();
+            am.getMemoryInfo(mi);
+            sb.append(" · 内存 ").append(((mi.totalMem - mi.availMem) >> 20)).append('/')
+                    .append((mi.totalMem >> 20)).append('M');
+        } catch (Throwable ignore) {}
+        return sb.toString();
+    }
+
     public static String tempC() {
         // 无网络下拉系统热区温度，保证组件不空
         try {

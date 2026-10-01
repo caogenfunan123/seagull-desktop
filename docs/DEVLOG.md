@@ -229,6 +229,35 @@
 
 **遗留**：8.6 / 8.7 见上；13.6 受目标应用限制；开机动画（14.x）整体未做，要 Magisk 侧配合。
 
+---
+
+## 批次 I — P2 root 增强层（触摸转发 / 窗口搬运 / 系统监控）
+
+**目标**：把三块 root 能力从「有开关没实现」变成真能跑：触摸转发、窗口搬运、系统监控。
+
+**改动**
+
+- 新增 `TouchForward.java`：整条触摸状态机。DOWN 记起点；MOVE 时按「跟手」开关分流（开=每 ≥16ms、位移 ≥2px 发一小段 `input -d <id> input swipe`；关=等抬手一次发完）；抬起时没滑动的补一次 `tap`；CANCEL 什么都不发。命令串行执行，最近 12 条命令与返回进静态环形日志（12.8 排障）。
+- `MirrorSlot` 的 `onTouch` 改成把 `MotionEvent` 整个喂给 `TouchForward`，删掉自己那套 `downX/downAt` + `HandlerThread`。
+- `LauncherModel` 加 `touchFollow`（12.5）。
+- 新增 `TaskMover.java`：`dumpsys` 解析 `displayId=` 找 `taskId`，然后按顺序试三条搬运命令（`am task move-to-display` / `am stack move-task` / `cmd activity task move-to-display`），把每条的真实返回原样拼成一段文字给 UI 看。
+- `MirrorActivity` 槽位右缘加「收回」小标签（11.14），点一下后台线程跑搬运，结果进诊断行。
+- `SysOps` 加 `cpuPct()`（`/proc/stat` 两次采样差，120ms 间隔）与 `monitorLine()`（CPU/温度/内存一行）。
+- 设置页：触摸分区补「注入方式」「跟手」「注入排障」「能力说明」；窗口分区补「收回窗口 / 拉回窗口 / 搬运排障」（都过 `rootOnly()`，没 root 就直说）；系统分区补「CPU / 温度 / 内存」。
+
+**复盘**
+
+- 做对：`TaskMover` 没有赌一个「通用写法」，而是按顺序试并把每条命令的返回原样摊在 UI 上。`am task` 的子命令各家 ROM 裁得不一致，容器里没法验证，能交付的最有价值形态就是「证据可见 + 一键试」。
+- 做错：`SysOps.monitorLine` 第一版写的是 `getMemoryClass() - availMem/MB` —— 把「本应用堆上限」和「系统可用内存」相减，得到的数字没有任何意义。改成 `(totalMem - availMem) / totalMem`。这类「单位对不上但能编译」的错，只有把两个 API 的语义放一起看才抓得到。
+- 做错：`TouchForward` 的 `lastAt` 一开始声明成 `float`（跟 `lastX/lastY` 写在一行），`e.getEventTime()` 是 `long`，编译期就报了。这个是纯手滑，编译器当场拦住。
+- 决策：跟手靠「拆成多条短 swipe」实现，不用 `input motionevent`（API 30+ 才有，低配车机未必有）。代价是命令量变大，日志里能直接看到，够用。
+- 决策：12.6 无障碍 `dispatchGesture` 只留开关没实现 —— 那要一整套无障碍服务 + 用户手动到系统里授权，公开版首发不值得。矩阵标 🟡 写明原因。
+
+**验证**：`typecheck.sh` 通过；CI（`89908c3`，批次 H）`completed success`。
+
+**遗留**：11.13/11.14/13.6/12.6 都要在真机（有 root）上验证命令可用性；容器里只能保证代码路径与降级提示正确。
+
+
 
 
 

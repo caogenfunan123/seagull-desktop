@@ -194,6 +194,7 @@ public class MirrorActivity extends BaseActivity {
         box.setBackgroundColor(Color.BLACK);
         box.addView(view, new android.widget.FrameLayout.LayoutParams(-1, -1));
         box.addView(wait, new android.widget.FrameLayout.LayoutParams(-1, -1));
+        buildEdgeTab(box, which);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(200));
         p.topMargin = dp(8);
         box.setLayoutParams(p);
@@ -215,12 +216,35 @@ public class MirrorActivity extends BaseActivity {
         });
         view.setOnTouchListener((v, e) -> {
             MirrorSlot s = which == 1 ? slotA : slotB;
-            if (s != null && s.ready()) { s.onTouch(e); return true; }
-            return false;
+            if (s == null || !s.ready()) return false;
+            s.onTouch(e);   // 点/滑/长按都在 TouchForward 里按设置分流（12.1~12.5）
+            return true;
         });
         view.setFocusable(true);
         view.setClickable(true);
         return box;
+    }
+
+    /** 11.14 边缘小标签：贴在槽位右边缘，点一下把窗口收回主屏（需 root）。 */
+    private void buildEdgeTab(android.widget.FrameLayout box, int which) {
+        if (!TaskMover.hasEdgeTab(this)) return;
+        final MirrorSlot slot = which == 1 ? slotA : slotB;
+        TextView tab = new TextView(this);
+        tab.setText("收回");
+        tab.setTextColor(Skin.c(R.color.text));
+        tab.setTextSize(11);
+        tab.setGravity(Gravity.CENTER);
+        tab.setBackgroundColor(0xCC1B1D22);
+        tab.setPadding(dp(4), dp(14), dp(4), dp(14));
+        tab.setOnClickListener(v -> new Thread(() -> {
+            int d = slot != null && slot.displayId() > 0 ? slot.displayId() : TaskMover.edgeDisplay();
+            final String out = TaskMover.reclaim(this, d);
+            ui.post(() -> appendDiag("边缘标签：" + out.replace('\n', ' ')));
+        }).start());
+        android.widget.FrameLayout.LayoutParams lp =
+                new android.widget.FrameLayout.LayoutParams(dp(38), -2);
+        lp.gravity = android.view.Gravity.END | android.view.Gravity.CENTER_VERTICAL;
+        box.addView(tab, lp);
     }
 
     private TextView waitLabel(String text) {

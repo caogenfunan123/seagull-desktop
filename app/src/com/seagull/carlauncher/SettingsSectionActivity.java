@@ -695,6 +695,14 @@ public class SettingsSectionActivity extends BaseActivity {
         toggleRow("息屏暂停", model.pauseOnScreenOff, () -> { model.pauseOnScreenOff = !model.pauseOnScreenOff; });
         note("默认显示大小与每应用独立缩放需要虚拟屏（L3），普通应用被系统拒绝，公开版不提供。");
 
+        sectionLabel("窗口搬运（需 root）");
+        actionRow("收回窗口", "把虚拟屏上的窗口搬回主屏", v -> rootOnly(
+                () -> msgDialog("收回窗口", TaskMover.reclaim(this, MirrorSlot.newestDisplay()))));
+        actionRow("从边缘小标签拉回", "把主屏上的窗口拉进虚拟屏", v -> rootOnly(
+                () -> msgDialog("拉回窗口", TaskMover.pullBack(this, MirrorSlot.newestDisplay()))));
+        actionRow("搬运排障", "dumpsys 里的 displayId / taskId", v -> rootOnly(
+                () -> msgDialog("搬运排障", TaskMover.dump(this))));
+
         sectionLabel("入口");
         actionRow("窗口能力自检页", "能力探测与逐项验证",
                 v -> startActivity(new Intent(this, WindowTestActivity.class)));
@@ -714,7 +722,20 @@ public class SettingsSectionActivity extends BaseActivity {
         });
         toggleRow("无障碍通道（公开版主通道）", model.useAccessibility, () -> { model.useAccessibility = !model.useAccessibility; });
         toggleRow("root 注入通道", model.useRootInput, () -> { model.useRootInput = !model.useRootInput; });
-        note("触摸方式选择与跟手体验在后续版本接入。");
+        toggleRow("跟手（滑动边走边发）", model.touchFollow, () -> { model.touchFollow = !model.touchFollow; });
+        sectionLabel("12.2 触摸方式");
+        choiceRow("注入方式", model.useRootInput ? "root input 命令" : "无障碍通道", () -> {
+            String[] names = {"root input 命令", "无障碍通道"};
+            int def = model.useRootInput ? 0 : 1;
+            choiceDialog("注入方式", names, def, i -> {
+                model.useRootInput = i == 0;
+                model.useAccessibility = i == 1;
+                model.save(); render();
+            });
+        });
+        actionRow("注入排障", "最近几条命令与返回", v -> msgDialog("注入排障", touchLog()));
+        actionRow("能力说明", "为什么没反应", v -> msgDialog("触摸通道", TouchForward.degradeNote(this)));
+        note("跟手开着时滑动会拆成多条命令（每条 ≥16ms），关掉就是抬起时一次发完。");
     }
 
     private void tasksBody() {
@@ -814,6 +835,13 @@ public class SettingsSectionActivity extends BaseActivity {
 
     private void systemBody() {
         toggleRow("开机自启", model.autoHome, () -> { model.autoHome = !model.autoHome; });
+        sectionLabel("15.10 系统监控");
+        actionRow("CPU / 温度 / 内存", SysOps.monitorLine(this), v -> {
+            new Thread(() -> {
+                final String out = SysOps.monitorLine(this);
+                runOnUiThread(() -> msgDialog("系统监控", out));
+            }).start();
+        });
         actionRow("设为默认桌面", "把默认桌面改成海鸥桌面", v -> {
             try {
                 startActivity(new Intent(Settings.ACTION_HOME_SETTINGS));
@@ -983,6 +1011,18 @@ public class SettingsSectionActivity extends BaseActivity {
         } catch (Throwable t) {
             return "1.0";
         }
+    }
+
+    /** root 才给的动作：没 root 就说清楚，不做盲试。 */
+    private void rootOnly(Runnable r) {
+        if (!Caps.hasRoot()) { toast("这台机器没有 root，这个动作做不了"); return; }
+        r.run();
+    }
+
+    private String touchLog() {
+        java.util.List<String> lines = TouchForward.lastLines();
+        if (lines.isEmpty()) return "还没有注入记录（窗口还没部署或没点过）";
+        return android.text.TextUtils.join("\n", lines);
     }
 
     private void showFingerprint() {

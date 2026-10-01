@@ -325,6 +325,7 @@ public final class LauncherModel {
     public int longPressMs = 500;        // 长按判定（300/500）
     public boolean useAccessibility = true;   // 公开版主通道
     public boolean useRootInput = true;       // root 通道
+    public boolean touchFollow = true;        // 12.5 跟手：滑动手势边走边发
 
     /* ==================== 状态：自动化任务 ==================== */
 
@@ -884,6 +885,7 @@ public final class LauncherModel {
             o.put("longPress", longPressMs);
             o.put("useA11y", useAccessibility);
             o.put("useRoot", useRootInput);
+            o.put("touchFollow", touchFollow);
             /* 任务 */
             JSONArray ta = new JSONArray();
             for (Task t : tasks) {
@@ -1072,6 +1074,7 @@ public final class LauncherModel {
             longPressMs = o.optInt("longPress", 500);
             useAccessibility = o.optBoolean("useA11y", true);
             useRootInput = o.optBoolean("useRoot", true);
+            touchFollow = o.optBoolean("touchFollow", true);
 
             JSONArray ta = o.optJSONArray("tasks");
             if (ta != null) {
