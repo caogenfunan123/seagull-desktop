@@ -62,7 +62,6 @@ public class SettingsHubActivity extends BaseActivity {
             new Sec("about", "关于", "版本 作者 检查更新 体检报告 指纹")
     };
 
-    private LauncherModel model;
     private LinearLayout listCol;
     private String query = "";
 
@@ -73,7 +72,6 @@ public class SettingsHubActivity extends BaseActivity {
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
-        model = new LauncherModel(this);
         setContentView(build());
     }
 

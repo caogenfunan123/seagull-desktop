@@ -19,7 +19,6 @@ import android.widget.Toast;
  */
 public class LayoutModeActivity extends BaseActivity {
 
-    private LauncherModel model;
     private LinearLayout listCol;
 
     private int dp(float v) {
@@ -29,7 +28,6 @@ public class LayoutModeActivity extends BaseActivity {
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
-        model = new LauncherModel(this);
         setContentView(build());
     }
 

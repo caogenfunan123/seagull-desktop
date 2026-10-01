@@ -256,11 +256,20 @@ public final class LauncherModel {
     public int marginH = 12;        // 屏幕外边距（左右）
     public int marginV = 8;         // 屏幕外边距（上下）
     public int gap = 6;             // 窗口之间的缝
+    /** 竖屏单独一份外边距与缝（TODO P0-8 7.7：横竖屏两套布局分开）。 */
+    public int portMarginH = 12;
+    public int portMarginV = 8;
+    public int portGap = 6;
     public Orientation orientation = Orientation.AUTO;
     public boolean keepScreenOn = false;
     public boolean hideSystemBars = false;
     public boolean topInfoBar = true;          // 顶部信息栏
     public boolean autoNetworkTime = true;
+
+    /** 按当前屏幕方向取外边距 / 缝。 */
+    public int marginHOf(boolean portrait) { return portrait ? portMarginH : marginH; }
+    public int marginVOf(boolean portrait) { return portrait ? portMarginV : marginV; }
+    public int gapOf(boolean portrait) { return portrait ? portGap : gap; }
 
     /* ==================== 状态：野菜岛 ==================== */
 
@@ -783,6 +792,9 @@ public final class LauncherModel {
             o.put("marginH", marginH);
             o.put("marginV", marginV);
             o.put("gap", gap);
+            o.put("portMarginH", portMarginH);
+            o.put("portMarginV", portMarginV);
+            o.put("portGap", portGap);
             o.put("orientation", orientation.name());
             o.put("keepOn", keepScreenOn);
             o.put("hideBars", hideSystemBars);
@@ -959,6 +971,9 @@ public final class LauncherModel {
             marginH = o.optInt("marginH", 12);
             marginV = o.optInt("marginV", 8);
             gap = o.optInt("gap", 6);
+            portMarginH = o.optInt("portMarginH", marginH);
+            portMarginV = o.optInt("portMarginV", marginV);
+            portGap = o.optInt("portGap", gap);
             orientation = optEnum(o, "orientation", Orientation.class, orientation);
             keepScreenOn = o.optBoolean("keepOn", false);
             hideSystemBars = o.optBoolean("hideBars", false);

@@ -23,7 +23,6 @@ public class FolderActivity extends BaseActivity {
 
     public static final String EXTRA_NAME = "folder_name";
 
-    private LauncherModel model;
     private String folderName;
     private LinearLayout rootCol;
 
@@ -34,7 +33,6 @@ public class FolderActivity extends BaseActivity {
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
-        model = new LauncherModel(this);
         folderName = getIntent() == null ? null : getIntent().getStringExtra(EXTRA_NAME);
         setContentView(build());
     }

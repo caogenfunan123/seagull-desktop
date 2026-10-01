@@ -42,7 +42,6 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private SharedPreferences prefs;
 
-    private LauncherModel model;
     private DesktopView desktop;
     private LinearLayout topBar, bottomBar, mainCol;
     private TextView pipBox;
@@ -51,7 +50,6 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
-        model = new LauncherModel(this);
         lastSkin = skinSignature();
         selfReport();
         setContentView(buildUi());
@@ -210,6 +208,13 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
 
     private void buildTopBar() {
         if (topBar == null) return;
+        // 顶部信息栏关掉时，时间挪到 Dock（TODO P0-8 7.11 / 7.12）
+        topBar.setVisibility(model.topInfoBar ? View.VISIBLE : View.GONE);
+        if (model.topInfoBar) buildInfoBar();
+        else model.dockShowClock = true;
+    }
+
+    private void buildInfoBar() {
         topBar.removeAllViews();
 
         TextView clock = new TextView(this);

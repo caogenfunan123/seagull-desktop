@@ -88,7 +88,6 @@ public class DesktopView extends FrameLayout {
 
         mainCol = new LinearLayout(getContext());
         mainCol.setOrientation(LinearLayout.VERTICAL);
-        mainCol.setPadding(dp(12), dp(10), dp(12), dp(6));
         addView(mainCol, new FrameLayout.LayoutParams(-1, -1));
 
         widgetStrip = new LinearLayout(getContext());
@@ -152,6 +151,13 @@ public class DesktopView extends FrameLayout {
     public void refresh() {
         LauncherModel m = model();
         if (m == null) return;
+
+        // 屏幕外边距与缝跟着设置走，横竖屏各一份（TODO P0-8 7.1~7.3 / 7.7）
+        boolean portrait = getResources().getConfiguration().orientation
+                == android.content.res.Configuration.ORIENTATION_PORTRAIT;
+        mainCol.setPadding(dp(m.marginHOf(portrait)), dp(m.marginVOf(portrait)),
+                dp(m.marginHOf(portrait)), dp(m.marginVOf(portrait) / 2));
+        cellGap = dp(m.gapOf(portrait));
 
         renderWidgets(m);
         widgetStrip.setAlpha(m.widgetStripAlpha / 100f);
@@ -289,11 +295,14 @@ public class DesktopView extends FrameLayout {
         return out;
     }
 
+    /** 桌面格子之间的缝（设置→屏幕，跟横竖屏各一份）。 */
+    private int cellGap = 6;
+
     private GridLayout.LayoutParams cellParams(int cols) {
         GridLayout.LayoutParams p = new GridLayout.LayoutParams();
         p.width = 0; p.height = dp(84);
         p.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f);
-        p.setMargins(dp(2), dp(5), dp(2), dp(5));
+        p.setMargins(cellGap, cellGap, cellGap, cellGap);
         return p;
     }
 

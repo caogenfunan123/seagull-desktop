@@ -42,7 +42,6 @@ public class SettingsSectionActivity extends BaseActivity {
     private static final String[] FN_KEYS = QuickBar.FN_KEYS;
     private static final String[] FN_LABELS = QuickBar.FN_LABELS;
 
-    private LauncherModel model;
     private String section;
 
     private int dp(float v) {
@@ -54,7 +53,6 @@ public class SettingsSectionActivity extends BaseActivity {
         super.onCreate(b);
         section = getIntent().getStringExtra(EXTRA_SECTION);
         if (section == null) section = "system";
-        model = new LauncherModel(this);
         render();
     }
 
@@ -467,9 +465,23 @@ public class SettingsSectionActivity extends BaseActivity {
     }
 
     private void screenBody() {
+        sectionLabel("横屏");
         sliderRow("屏幕外边距（左右）", 0, 48, model.marginH, " dp", v -> { model.marginH = v; });
         sliderRow("屏幕外边距（上下）", 0, 48, model.marginV, " dp", v -> { model.marginV = v; });
         sliderRow("窗口之间的缝", 0, 24, model.gap, " dp", v -> { model.gap = v; });
+
+        sectionLabel("竖屏（单独一份）");
+        sliderRow("屏幕外边距（左右）", 0, 48, model.portMarginH, " dp", v -> { model.portMarginH = v; });
+        sliderRow("屏幕外边距（上下）", 0, 48, model.portMarginV, " dp", v -> { model.portMarginV = v; });
+        sliderRow("窗口之间的缝", 0, 24, model.portGap, " dp", v -> { model.portGap = v; });
+        actionRow("竖屏复制横屏的值", "把上面横屏的三项搬过来", v -> {
+            model.portMarginH = model.marginH;
+            model.portMarginV = model.marginV;
+            model.portGap = model.gap;
+            model.save(); render();
+        });
+
+        sectionLabel("方向与显示");
         choiceRow("屏幕方向", model.orientation.label, () -> {
             LauncherModel.Orientation[] vals = LauncherModel.Orientation.values();
             String[] names = new String[vals.length];
@@ -483,13 +495,18 @@ public class SettingsSectionActivity extends BaseActivity {
             model.keepScreenOn = !model.keepScreenOn;
             applyKeepScreenOn();
         });
-        toggleRow("顶部信息栏（日期 / Wi-Fi / 电量）", model.topInfoBar, () -> { model.topInfoBar = !model.topInfoBar; });
+        toggleRow("顶部信息栏（日期 / Wi-Fi / 电量）", model.topInfoBar, () -> {
+            model.topInfoBar = !model.topInfoBar;
+            model.save(); render();
+        });
+        note("顶部信息栏关掉后，时间自动挪到 Dock 上。");
         toggleRow("自动同步网络时间", model.autoNetworkTime, () -> {
             model.autoNetworkTime = !model.autoNetworkTime;
+            model.save();
             SysOps.R r = SysOps.setAutoTime(model.autoNetworkTime);
             if (!r.ok) toast("需要 root 通道：" + r.out);
         });
-        note("横屏 / 竖屏两套布局分开存放，在后续版本接入。");
+        note("隐藏系统栏需要平台签名，公开版不可达，对应入口不显示。");
     }
 
     private void applyKeepScreenOn() {

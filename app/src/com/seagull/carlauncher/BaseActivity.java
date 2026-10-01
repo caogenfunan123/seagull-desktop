@@ -14,14 +14,35 @@ import android.os.Bundle;
  */
 public class BaseActivity extends Activity {
 
+    protected LauncherModel model;
+
     @Override protected void attachBaseContext(Context base) {
         super.attachBaseContext(scaled(base));
     }
 
     @Override protected void onCreate(Bundle b) {
-        LauncherModel m = new LauncherModel(this);
-        Skin.apply(m);
+        model = new LauncherModel(this);
+        Skin.apply(model);
         super.onCreate(b);
+        applyOrientation(model);
+    }
+
+    /** 屏幕方向（TODO P0-8 7.4~7.6）。AUTO = 跟随系统。 */
+    private void applyOrientation(LauncherModel m) {
+        switch (m.orientation) {
+            case LANDSCAPE: setRequestedOrientation(
+                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE); break;
+            case PORTRAIT: setRequestedOrientation(
+                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT); break;
+            default: setRequestedOrientation(
+                    android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+        }
+    }
+
+    /** 当前是不是竖屏（决定用哪一套边距与缝）。 */
+    protected boolean isPortrait() {
+        return getResources().getConfiguration().orientation
+                == android.content.res.Configuration.ORIENTATION_PORTRAIT;
     }
 
     private static Context scaled(Context base) {

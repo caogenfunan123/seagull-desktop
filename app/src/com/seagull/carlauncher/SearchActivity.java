@@ -29,7 +29,6 @@ import java.util.Locale;
  */
 public class SearchActivity extends BaseActivity {
 
-    private LauncherModel model;
     private LinearLayout list;
     private EditText input;
     private String query = "";
@@ -41,7 +40,6 @@ public class SearchActivity extends BaseActivity {
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
-        model = new LauncherModel(this);
         setContentView(build());
         input.requestFocus();
         try {
