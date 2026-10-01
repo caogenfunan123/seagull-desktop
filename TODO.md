@@ -178,14 +178,20 @@
 - [x] 一键清理后台（`SysOps.killBackground`）
 - [x] 息屏暂停 + 亮屏恢复（开关已接）
 
-### P2-5 root 守护进程与 L3 修复 🟡 代码已写，真机待验（批次 J）
+### P2-5 root 守护进程与 L3 修复 🟡 代码已写，真机待验（批次 J + 批次 K）
 - [x] `PrivCodec` 线协议 + `PrivCodecCheck` 30 项自检（纯 JVM）
 - [x] `PrivClient`：`su -c setsid app_process` 拉起守护进程、断线重连、会话级禁用
 - [x] `RootMain`：反射 `startActivityAsUser`（setLaunchDisplayId）/ `injectInputEvent`（多指）/ `moveRootTaskToDisplay` / `removeTask`
-- [x] VD flags 修正 `PUBLIC|AUTO_MIRROR`（去掉 `OWN_CONTENT_ONLY`=黑屏根因）
 - [x] 守护进程在位时触摸改原始事件中继（多指、零命令开销）
-- [ ] 真机验证：SELinux 是否放行 abstract socket、KernelSU su 域、ROM 是否裁剪 `moveRootTaskToDisplay`
 - [x] 复核 `findTaskId` 的 dumpsys 口径（已知坑 #11）—— 段头归属，`TaskScan` + `DumpParseCheck` 14 项
+- [x] **批次 K：画中画三条实测抱怨根治**
+  - [x] 抱怨③「进去桌面还不是画中画界面」：TRUSTED 屏优先（`RootOps.grantTrustedDisplayRole` 授 COMPANION_DEVICE_APP_STREAMING → `TrustedFlags` 5 组候选 + 受信位 1<<7 校验），MediaProjection 屏回落 `projectionFallbackFlags()`
+  - [x] VD flags 从 `PUBLIC|AUTO_MIRROR` 改为 `PUBLIC|OWN_CONTENT_ONLY|PRESENTATION`（AUTO_MIRROR 会把手机桌面镜像进画中画，参考实现已证伪）
+  - [x] 启动 flags 0x18000000 → **0x18800000**（补 EXCLUDE_FROM_RECENTS，singleTask 目标不带 MULTIPLE_TASK 会拉主屏已有任务到前台）+ `--user 0`
+  - [x] 抱怨①「画中画应跟随画布大小」：VD 按 SurfaceView 实际像素 1:1 建（`MirrorActivity.canvasW/H`），触摸 scale=1f 零换算
+  - [x] 抱怨②「点击不进去软件」：1:1 建屏修坐标偏移；另加 `RootOps.ensureOnDisplay` 保守自愈（singleTask 应用虚拟屏内跳转拉走任务时搬回，解析失败不重拉）
+  - [x] `TrustedFlagsCheck` 10 项 / `StackListCheck` 12 项自检（前者需 `-cp android-33.jar`）
+- [ ] 真机验证（用户操作）：① `am role get-role-holder` 是否真授到 ADD_TRUSTED_DISPLAY、dumpsys display 看 seagull-pipN flags 是否带 TRUSTED ② SELinux 放行角色授予/abstract socket ③ ROM 是否裁剪 `moveRootTaskToDisplay`
 
 ---
 
@@ -220,6 +226,10 @@
 11. **`dumpsys activity activities` 的 display 归属**：按 `Display #N` 段头切分，
     后续 `* Task{...}` 行归当前 N；Task 行本身**没有** `displayId=` 字段（少数 ROM 例外，
     `TaskScan` 两种都认）。
+12. **`am stack list` 不能按 `displayId=` 分段** —— 它逐行描述 stack 属性，stack 行里就带
+    `displayId=` 字样，看到它就切段会把同一个 stack 后面的 task 行切丢。
+    正确口径：`displayId=N` 的 stack 自身成段头，`stackId=` → `taskId=` → `*TaskRecord{}` /
+    `topActivity=` 依次归属当前段（见 `StackScan` + `StackListCheck` 12 项）。
 
 ---
 

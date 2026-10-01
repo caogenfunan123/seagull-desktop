@@ -20,8 +20,8 @@ public final class SelfTestMirror {
     private static final String TARGET = "com.android.deskclock";
 
     private static final String[] FLAG_CANDIDATES = {
-            "0x18800000",   // NON_DOCUMENT(0x08000000) | NEW_TASK —— 参考实现实测用的
-            "0x18000000",   // MULTIPLE_TASK | NEW_TASK
+            "0x18800000",   // EXCLUDE_FROM_RECENTS(0x00800000) | MULTIPLE_TASK | NEW_TASK —— 批次 K 口径
+            "0x18000000",   // MULTIPLE_TASK | NEW_TASK —— 批次 J 口径（不带 singleTask 目标会被拉回主屏）
             "0x10104000",   // 报告 §6 提到的另一组
     };
 
@@ -50,6 +50,7 @@ public final class SelfTestMirror {
             try {
                 line("✔ 录屏授权 OK，开始全自动流程");
                 PipProjectionService.start(act);
+                trustedProbe(act);
                 int waited = 0;
                 while (!PipProjectionService.running && waited < 3000) {
                     Thread.sleep(150); waited += 150;
@@ -84,7 +85,7 @@ public final class SelfTestMirror {
                     // 先停目标再启，保证是"冷启到指定屏"
                     Caps.exec("am force-stop " + TARGET);
                     Thread.sleep(600);
-                    String out = Caps.exec("am start --display " + id + " -f " + flags + " -n " + comp);
+                    String out = Caps.exec("am start --user 0 --display " + id + " -f " + flags + " -n " + comp);
                     line("   am 输出: " + flat(out));
                     Thread.sleep(2500);
                     boolean ok = taskOnDisplay(id, TARGET);
@@ -121,6 +122,48 @@ public final class SelfTestMirror {
             }
             line("===== 自检结束 =====");
         }, "l3-selftest").start();
+    }
+
+    /**
+     * 批次 K 新增 ⓪：TRUSTED 屏探测 —— 用户抱怨③（"进去桌面还不是画中画界面"）的根因验证。
+     * Android 14 的 ActivityStarter 只允许 home-affinity / TASK_ON_HOME 任务落【受信】虚拟屏，
+     * 所以这一步逐组候选建屏、读回 Display flags 校验 TRUSTED 位（1<<7），全部失败才回落投影屏。
+     * 探测屏不带 Surface，验完即 release，不影响后面的投影建屏。
+     */
+    private static void trustedProbe(Context ctx) {
+        line("⓪ TRUSTED 屏探测（批次 K）");
+        if (!TrustedFlags.supportsTrusted(android.os.Build.VERSION.SDK_INT)) {
+            line("   SDK<30，无需 TRUSTED（Android 14 前投影屏也拉不走任务），跳过");
+            return;
+        }
+        boolean granted = RootOps.grantTrustedDisplayRole(ctx);
+        line("   角色授予 COMPANION_DEVICE_APP_STREAMING → " + granted + " state=" + RootOps.roleState());
+        android.hardware.display.DisplayManager dm =
+                (android.hardware.display.DisplayManager) ctx.getSystemService(Context.DISPLAY_SERVICE);
+        int sdk = android.os.Build.VERSION.SDK_INT;
+        for (int raw : TrustedFlags.candidateFlags()) {
+            int flags = TrustedFlags.normalize(raw, sdk);
+            String desc = TrustedFlags.describe(flags);
+            android.hardware.display.VirtualDisplay vd = null;
+            try {
+                vd = dm.createVirtualDisplay("seagull-trustprobe", 64, 64, 160, null, flags);
+                if (vd == null) { line("   " + desc + " → null（被拒）"); continue; }
+                int df = vd.getDisplay().getFlags();
+                boolean trusted = TrustedFlags.hasTrusted(df);
+                line("   " + desc + " → displayId=" + vd.getDisplay().getDisplayId()
+                        + " displayFlags=0x" + Integer.toHexString(df)
+                        + (trusted ? "  ✔ 受信（任务能落在虚拟屏上）" : "  ✘ 未受信（建出来了，任务仍会被拉回主屏）"));
+                vd.release();
+                if (trusted) {
+                    line("   ⇒ TRUSTED 屏可用，修复「进去桌面而不是画中画」的前提成立");
+                    return;
+                }
+            } catch (Throwable t) {
+                line("   " + desc + " → 异常 " + t);
+                if (vd != null) try { vd.release(); } catch (Throwable ignore) {}
+            }
+        }
+        line("   ⇒ 全部候选未受信：回落投影屏 + ensureOnDisplay 自愈（真机需查 SELinux 是否放行角色授予）");
     }
 
     /**

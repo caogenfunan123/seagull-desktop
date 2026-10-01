@@ -239,7 +239,7 @@
 | # | 功能 | 状态 | 备注 |
 |---|---|---|---|
 | 11.1 | 画中画（系统 PiP，L2） | ✅ | 实测可用 |
-| 11.2 | 虚拟屏窗口（L3，root） | 🟡 | flags 修正为 PUBLIC\|AUTO_MIRROR（原 OWN_CONTENT_ONLY 只显示同 UID 内容=黑屏根因）+ root 守护进程进程内反射启动，待真机复验 |
+| 11.2 | 虚拟屏窗口（L3，root） | 🟡 | TRUSTED 屏优先：root 授 COMPANION_DEVICE_APP_STREAMING 角色 → DisplayManager 6 参 createVirtualDisplay + 5 组 flag 候选降级 + 受信位（1<<7）校验；失败回落 MediaProjection PUBLIC\|OWN_CONTENT_ONLY\|PRESENTATION。尺寸按 SurfaceView 实际像素 1:1；flags 0x18800000 含 EXCLUDE_FROM_RECENTS + `--user 0`；回前台目标任务自愈（ensureOnDisplay）。真机待验：dumpsys display 看 seagull-pipN flags 是否真带 TRUSTED |
 | 11.3 | 每格绑应用 | ✅ | 镜像两槽各绑一个包名，存 `mirrorPkg1/2` |
 | 11.4 | 各应用显示大小（独立 dpi） | ⛔ | `setDisplayId` 被拒 |
 | 11.5 | 默认显示大小 | ⛔ | 同上 |

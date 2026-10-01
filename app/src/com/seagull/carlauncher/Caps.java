@@ -111,7 +111,13 @@ public final class Caps {
     /** 虚拟屏的落地路径，给体检报告如实写清楚用。 */
     public static synchronized String vdPath() {
         if (Process.myUid() == Process.SYSTEM_UID) return "system uid 直连";
-        if (hasRoot()) return "root 守护进程反射（待真机验证）";
+        if (hasRoot()) {
+            // 批次 K：root 在手的设备优先 TRUSTED 屏（角色授予 + 受信位校验），
+            // 失败回落投影屏 + ensureOnDisplay 自愈
+            return android.os.Build.VERSION.SDK_INT >= 33
+                    ? "root TRUSTED 屏 / 投影兜底（待真机验证）"
+                    : "root 守护进程反射 + 投影屏（Android 14 前不受信也拉不走）";
+        }
         return "不可用";
     }
 

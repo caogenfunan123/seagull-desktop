@@ -1,7 +1,6 @@
 package com.seagull.carlauncher;
 
 import android.content.Context;
-import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
 import android.media.projection.MediaProjection;
 import android.os.Handler;
@@ -13,17 +12,21 @@ import android.view.Surface;
 /**
  * 一个「应用真进小窗」的镜像槽 —— L3 核心。
  *
- * 移植自用户仓库 caogenfunan123/carlink-desktop 的 mirror/MirrorSlot.kt，
- * 机制核验自 carplay-reverse-engineering 报告 §6/§11 与《画中画触摸行为分析报告》。
+ * 移植自用户仓库 caogenfunan123/carlink-desktop 的 mirror/MirrorSlot.kt
+ * （m13 版起含 TRUSTED 屏），机制核验自 carplay-reverse-engineering 报告
+ * §6/§11、《画中画触摸行为分析报告》与 OneStep4 对标结论。
  *
  * 与 L1（WindowCard）的本质区别：
  *   L1 = MediaProjection 镜像主屏，只读；
- *   L3 = createVirtualDisplay 建独立屏 → root `am start --display` 把目标应用搬进去
- *        → 画面渲染进我们的 SurfaceView → root `input -d` 把触摸回注进去。
+ *   L3 = createVirtualDisplay 建独立屏 → root 把目标应用搬进去
+ *        → 画面渲染进我们的 SurfaceView → 触摸回注进去。
  *        目标应用真的在这块屏上跑，不是镜像。
  *
- * 关键：建屏用【MediaProjection.createVirtualDisplay】而非 DisplayManager 版 ——
- * 后者会检查 ADD_TRUSTED_DISPLAY(signature|role)，前者是普通应用合法拿虚拟屏的正道。
+ * 建屏两条路（批次 K 起，TRUSTED 优先）：
+ *   · TRUSTED 直建：root 授角色后用 DisplayManager 公开 6 参 createVirtualDisplay
+ *     + flag 候选降级 + TRUSTED 位校验 —— Android 14 上任务不被拉回主屏的关键；
+ *   · MediaProjection 兜底：普通应用合法拿虚拟屏的正道，无 TRUSTED，
+ *     Android 14 上 singleTask 目标可能被拉回主屏（有 ensureOnDisplay 自愈兜底）。
  */
 public final class MirrorSlot {
 
@@ -36,6 +39,10 @@ public final class MirrorSlot {
     private VirtualDisplay vd;
     private volatile int displayId = -1;
     private volatile boolean ready;
+    /** 批次 K：true = 本次 VD 是 TRUSTED 受信屏（任务才不会被系统拉回主屏）。 */
+    private volatile boolean trusted;
+    /** 批次 K：true = TRUSTED 直建失败且缺录屏 token，需要先走录屏授权再兜底。 */
+    private volatile boolean needsProjection;
     private String lastError = "";
     private String lastPkg = "";
     private String lastSig = "";
@@ -61,6 +68,8 @@ public final class MirrorSlot {
 
     public int displayId() { return displayId; }
     public boolean ready() { return ready; }
+    public boolean trusted() { return trusted; }
+    public boolean needsProjection() { return needsProjection; }
     public String lastError() { return lastError; }
 
     /* ---------------- 全局活跃屏注册表（供抽屉"投到车机屏"用） ---------------- */
@@ -82,6 +91,21 @@ public final class MirrorSlot {
     /**
      * 部署（幂等）。sig = pkg + surface + 尺寸，没变直接返回 true。
      * 【必须在后台线程调用】：内部会跑 su，阻塞数秒。
+     *
+     * 建屏策略（批次 K，对标 carlink-desktop m13 / OneStep4）：
+     *   ① TRUSTED 直建：root 授 COMPANION_DEVICE_APP_STREAMING 角色 → 本进程
+     *      DisplayManager.createVirtualDisplay(name,w,h,dpi,surface,flags)，5 组
+     *      flag 候选逐个降级 + Display flags 校验 TRUSTED 位（1<<7）；
+     *   ② TRUSTED 不可用（角色授予失败 / ROM 拒绝）→ MediaProjection 兜底，
+     *      flags = PUBLIC|OWN_CONTENT_ONLY|PRESENTATION（参考实现实测组合）。
+     * 为什么 TRUSTED 是关键：Android 14 只允许 home-affinity/TASK_ON_HOME 任务
+     * （singleTask 应用）落在受信屏；非受信屏上即使注入了 launchDisplayId，
+     * 任务也会被系统拉回默认屏 —— 用户实测"进去桌面还不是画中画界面"的根因。
+     *
+     * 尺寸口径：VD 严格按 SurfaceView 的实际 w/h/dpi 建（1:1）——
+     * 触摸坐标零换算、应用窗口按画布尺寸布局（"画中画跟随画布大小"）。
+     * 批次 J 的 PUBLIC|AUTO_MIRROR 已废弃：任务不在屏上时 AUTO_MIRROR 会把
+     * 手机桌面镜像进画中画，正是"画中画里看到的是桌面而不是应用"的来源。
      */
     public boolean deploy(MediaProjection mp, String pkg, Surface surface, int w, int h, int dpi) {
         String sig = pkg + "|" + (surface == null ? "nosurface" : System.identityHashCode(surface))
@@ -114,24 +138,35 @@ public final class MirrorSlot {
         teardownVd();
         lastPkg = pkg;
         projection = mp;
+        needsProjection = false;
+        trusted = false;
 
-        try {
-            vd = mp.createVirtualDisplay(
-                    "seagull-" + name, w, h, dpi,
-                    // Extendroid 实测跑得通的组合：PUBLIC + AUTO_MIRROR。
-                    // 曾经的黑屏根因：OWN_CONTENT_ONLY 只显示【与建屏者同 UID】的内容 ——
-                    // 导航/音乐是别人的 uid，task 明明搬上来了（dumpsys 看得见），
-                    // 画面照样是黑的。PRESENTATION（展示屏）同样把第三方窗口拦在外面。
-                    // AUTO_MIRROR：这块屏暂无自有内容时回退镜像主屏，目标应用启动前的间隙不黑屏。
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
-                            | DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                    surface, null, mainHandler);
-        } catch (Throwable t) {
-            lastError = "createVirtualDisplay 失败: " + t;
-            Log.e(TAG, lastError, t);
-            return false;
+        VirtualDisplay made = createTrustedVd(w, h, dpi, surface);
+        if (made != null) {
+            vd = made;
+            trusted = true;
+            projection = null;   // TRUSTED 屏不靠 MediaProjection
+            Log.i(TAG, "[" + name + "] TRUSTED 虚拟屏建成 " + w + "x" + h);
+        } else {
+            // 兜底：MediaProjection 路径（需要录屏授权 token）
+            if (mp == null) {
+                needsProjection = true;
+                lastError = "TRUSTED 屏不可用且无录屏授权（兜底路径缺 token）";
+                return false;
+            }
+            Log.w(TAG, "[" + name + "] TRUSTED 直建失败，回落 MediaProjection 路径");
+            try {
+                vd = mp.createVirtualDisplay(
+                        "seagull-" + name, w, h, dpi,
+                        TrustedFlags.projectionFallbackFlags(),
+                        surface, null, mainHandler);
+            } catch (Throwable t) {
+                lastError = "createVirtualDisplay 失败: " + t;
+                Log.e(TAG, lastError, t);
+                return false;
+            }
+            if (vd == null) { lastError = "createVirtualDisplay 返回 null"; return false; }
         }
-        if (vd == null) { lastError = "createVirtualDisplay 返回 null"; return false; }
 
         displayId = vd.getDisplay() != null ? vd.getDisplay().getDisplayId() : -1;
         if (displayId < 0) { lastError = "拿不到虚拟屏 id"; teardownVd(); return false; }
@@ -145,10 +180,54 @@ public final class MirrorSlot {
         touchFor().setDisplay(displayId, 1f);   // VD 与 surface 1:1，缩放固定 1
         lastSig = sig;
         // ready 表示"可接收触摸"：建屏+搬应用成功即视为就绪（画面由 attachSurface 负责）
-        ready = (surface != null && surface.isValid());
+        ready = (surface == null) || surface.isValid();
         Log.i(TAG, "[" + name + "] " + pkg + " 已部署到 displayId=" + displayId + " " + w + "x" + h
-                + " ready=" + ready);
+                + " trusted=" + trusted + " ready=" + ready);
         return true;
+    }
+
+    /**
+     * TRUSTED 虚拟屏直建（API 33+；角色授予失败或 ROM 拒绝时返回 null，
+     * 调用方回落 MediaProjection）。flag 候选逐个降级，建后校验 Display flags
+     * 是否真带 TRUSTED 位（1<<7）—— 不校验等于没建，有些 ROM 会静默吞掉 flag。
+     */
+    private VirtualDisplay createTrustedVd(int w, int h, int dpi, Surface surface) {
+        if (android.os.Build.VERSION.SDK_INT < 33) return null;
+        if (!RootOps.grantTrustedDisplayRole(ctx)) {
+            Log.w(TAG, "[" + name + "] TRUSTED 角色授予失败，跳过直建");
+            return null;
+        }
+        android.hardware.display.DisplayManager dm =
+                (android.hardware.display.DisplayManager)
+                        ctx.getSystemService(Context.DISPLAY_SERVICE);
+        if (dm == null) return null;
+        int sdk = android.os.Build.VERSION.SDK_INT;
+        for (int raw : TrustedFlags.candidateFlags()) {
+            int flags = TrustedFlags.normalize(raw, sdk);
+            VirtualDisplay candidate;
+            try {
+                // 6 参公开重载（API 33 起在 SDK 里）；老设备 NoSuchMethodError 由 catch 兜
+                candidate = dm.createVirtualDisplay("seagull-" + name, w, h, dpi, surface, flags);
+            } catch (Throwable t) {
+                Log.w(TAG, "[" + name + "] flags=0x" + Integer.toHexString(flags)
+                        + " 建屏被拒: " + t);
+                continue;
+            }
+            if (candidate == null) continue;
+            int df = -1;
+            try {
+                df = candidate.getDisplay() != null ? candidate.getDisplay().getFlags() : -1;
+            } catch (Throwable ignore) {}
+            if (TrustedFlags.hasTrusted(df)) {
+                Log.i(TAG, "[" + name + "] TRUSTED 屏建成 flags=0x" + Integer.toHexString(flags)
+                        + " displayFlags=0x" + Integer.toHexString(df));
+                return candidate;
+            }
+            Log.w(TAG, "[" + name + "] flags=0x" + Integer.toHexString(flags) + " 未获受信位"
+                    + " (df=0x" + Integer.toHexString(df) + ")，降级下一候选");
+            try { candidate.release(); } catch (Throwable ignore) {}
+        }
+        return null;
     }
 
     /**
@@ -207,12 +286,14 @@ public final class MirrorSlot {
         }
     }
 
-    /** 诊断行：给 UI 显示"虚拟屏到底建没建"。 */
+    /** 诊断行：给 UI 显示"虚拟屏到底建没建、是不是受信屏"。 */
     public String describe() {
         if (displayId <= 0) {
             return "未部署" + (lastError.isEmpty() ? "" : "（" + lastError + "）");
         }
-        return (ready ? "已就绪" : "已建屏未挂载") + " · displayId=" + displayId
+        return (ready ? "已就绪" : "已建屏未挂载")
+                + (trusted ? " · TRUSTED 受信屏" : " · 投影屏(非受信)")
+                + " · displayId=" + displayId
                 + (lastPkg.isEmpty() ? "" : " · " + lastPkg);
     }
 }

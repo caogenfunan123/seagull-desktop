@@ -36,7 +36,7 @@
 app/
   AndroidManifest.xml          权限 + 组件注册（新增 Activity/Service 必须在这里登记）
   build.sh                     7 步 APK 构建，环境变量可覆盖（CI 用）
-  selfcheck/                   纯 JVM 自检（QuickbarCheck / LrcCheck / PrivCodecCheck / DumpParseCheck）
+  selfcheck/                   纯 JVM 自检（QuickbarCheck / LrcCheck / PrivCodecCheck / DumpParseCheck / TrustedFlagsCheck / StackListCheck）
   src/com/seagull/carlauncher/
     BaseActivity.java          公共基类：fontScale + Skin + 方向 + model
     LauncherModel.java         全量配置单一事实源（最大的文件，改它要小心）
@@ -52,9 +52,12 @@ app/
     TaskEngine.java            自动化任务
     TaskMover.java             窗口搬运（root）
     TouchForward.java          触摸转发（双通道：守护中继 / input 命令）
-    MirrorSlot.java            虚拟屏镜像槽（两块）
+    MirrorSlot.java            虚拟屏镜像槽（两块；TRUSTED 优先 + 投影兜底 + 1:1）
+    TrustedFlags.java          TRUSTED 屏 flag 候选/规范化/受信位校验
+    StackScan.java             am stack list 解析：任务在哪个屏（纯 JVM，可自检）
     PrivCodec.java             守护进程线协议（纯 JVM，可自检）
     TaskScan.java              dumpsys 扫 task：display 归属看段头（纯 JVM，可自检）
+    SelfTestL3.java / SelfTestMirror.java   L3 真机自检（⓪ TRUSTED 探测 + ①~⑩ 建屏/搬应用/触摸）
     PrivClient.java            守护进程客户端（拉起/重连/降级）
     RootMain.java              app_process 守护进程入口（反射隐藏 API）
     Caps.java / SysOps.java / RootOps.java   能力探测 / 系统操作 / root 通道
@@ -123,6 +126,8 @@ public class LrcCheck {
 
 跑法：`javac -d /tmp/sc <纯Java类> app/selfcheck/XxxCheck.java && java -ea -cp /tmp/sc <类名>`。
 **要能脱离 Android 跑**，所以算法部分别 import android.\* —— 这也是 `Lrc` 被拆出来的原因。
+例外：`TrustedFlagsCheck` 校验的 flag 常量来自 DisplayManager，需
+`-cp /tmp/opencode/android-sdk/platforms/android-33.jar`（自检本身仍不跑 android 代码）。
 
 ---
 

@@ -358,3 +358,70 @@ SecurityException 拒过一次，守护进程路径是否绕过待真机确认�
 - 决策：`moveTaskToDisplay` 的 taskId 仍取「第一个」而不是「主屏上的」
   —— 语义是「把这个包现有的 task 搬到目标屏」，搬之前加已在判断兜底；
   真要按屏挑，TaskScan 的严格模式已经现成。
+
+## 批次 K — 画中画镜像：VD 1:1、触摸进得去、目标任务不被拉回主屏
+
+**目标**：修用户实测三条抱怨（对标 carlink-desktop m13 / OneStep4）：
+①画中画应跟随画布大小 ②点击不进去软件 ③进去桌面还不是画中画界面。
+
+**参考实现依据**（`/tmp/opencode/refs/carlink-desktop-private`，0.2-m13 +
+OneStep4 逐行亲核）：
+
+- 抱怨③根因：Android 14 ActivityStarter 只允许 home-affinity / TASK_ON_HOME
+  任务落**【受信】虚拟屏**；MediaProjection 屏无 TRUSTED，注入 launchDisplayId
+  也会被拉回默认屏。解法：root 授 `android.app.role.COMPANION_DEVICE_APP_STREAMING`
+  角色 → RoleController 授签名级 `ADD_TRUSTED_DISPLAY` → 用公开 6 参
+  `createVirtualDisplay`（android-33.jar javap 确认 public）建 TRUSTED 屏。
+- 批次 J 的 `PUBLIC|AUTO_MIRROR` 被参考实现证伪：任务不在屏上时 AUTO_MIRROR
+  把手机桌面镜像进画中画。参考版实测组合 `PUBLIC|OWN_CONTENT_ONLY|PRESENTATION`，
+  其真机截图证明高德/网易云能渲染进 PiP（推翻「OWN_CONTENT_ONLY 黑屏」假设——
+  黑屏实为任务没上去）。
+- 启动 flags 0x18000000 → **0x18800000**（补 EXCLUDE_FROM_RECENTS；m8 真机结论：
+  singleTask 目标不带 MULTIPLE_TASK 会拉主屏已有任务到前台），另加 `--user 0`。
+- singleTask 应用在虚拟屏内跳转会拉走任务 → 需 `am stack list` 解析 + 保守自愈。
+
+**改动**
+
+- 新增 `TrustedFlags.java`：5 组 flag 候选（最全→最保守）/ normalize（SDK≥30
+  保 TRUSTED；PUBLIC 强制带 OWN_CONTENT_ONLY、剥 INSECURE_KEYGUARD、永远剥
+  SECURE）/ `hasTrusted` 位校验（Display flags TRUSTED=1<<7）/ 兜底
+  `projectionFallbackFlags()`/ `describe()`。
+- 新增 `StackScan.java`：`am stack list` 纯 JVM 解析（displayId 段头归属、
+  stackId→taskId→*TaskRecord 行、isRunningOnDisplay / findTaskOnDisplay /
+  firstTaskOnDisplay）。坑：stack 行自带 `displayId=` 字样，不能拿它当段头。
+- `RootOps.java`：`LAUNCH_FLAGS = 0x18800000`；新增
+  `grantTrustedDisplayRole`/`roleState`（进程内缓存、幂等、
+  `am role add-role-holder --user 0 <role> <pkg> 0`）；新增 `ensureOnDisplay`
+  保守自愈（守护进程 `moveRootTaskToDisplay` 优先，回退 `am task move-task`，
+  解析失败不重拉——m12 教训：误判重拉会在虚拟屏内叠出两个目标任务）；
+  `launchOnDisplay` 加 `--user 0`，`launchViaApi` 补 EXCLUDE_FROM_RECENTS。
+- `MirrorSlot.java`：`deploy` 改 TRUSTED 优先（createTrustedVd：SDK≥33 +
+  角色授予 + 5 组候选 + 受信位校验，失败 release 候选），失败回落
+  MediaProjection `projectionFallbackFlags()`；`projection` 允许 null
+  （needsProjection 标记）；desize 注释改 1:1 口径；describe 加 trusted/
+  needsProjection。
+- `MirrorActivity.java`：`deployNow` 不再强制录屏 token；VD 尺寸改
+  `canvasW()/canvasH()`（优先 SurfaceView 实测，退回 全宽-dp(32) × dp(200)
+  设计尺寸）——1:1 建屏后 `TouchForward.scale()`=1f 就是几何正确；
+  `attachTo` 去掉 projection 门；`deploySlot` 去掉 UI 线程 su 前置检查，
+  统一交给后台 deploy 决策；wait 遮罩按 `slot.ready()` 隐藏；onResume 接
+  `ensureOnDisplay`（ensureOnDisplay）；诊断区加角色/受信状态。
+- `SelfTestL3` 补 ⑨⑩：角色授予日志 + ensureOnDisplay + StackScan 核对。
+- `SelfTestMirror` 补 ⓪ TRUSTED 屏探测：逐组候选建无 Surface 探测屏，
+  读回 `displayFlags` 校验 TRUSTED 位并 release，日志直接回答「受信到位没有」。
+- `Caps.vdPath()`：root 在手的设备按 SDK 区分口径（Android 14 起需 TRUSTED）。
+- 新增自检：`TrustedFlagsCheck` 10 项、`StackListCheck` 12 项。
+
+**验证**：`typecheck.sh` 通过；`TrustedFlagsCheck` 10 项（需 `-cp
+android-33.jar`）、`StackListCheck` 12 项、`StackListCheck` 依赖的纯 JVM 层
+零 android import。真机验证项见 TODO P2-5。
+
+**复盘**
+
+- 做对：把「Android 14 拉回任务」的机制问题交给 root 角色授予 + 受信位校验，
+  几何问题（画布 1:1）用 SurfaceView 实测尺寸解决，两个抱怨根因各归其位；
+  `am stack list` 解析层继续放纯 JVM 类 + 12 项断言，不等真机。
+- 决策：自愈保守——`am stack list` 解析失败就跳过，不重拉任务（误拉会在
+  虚拟屏内叠出两个目标任务，比不修更糟）。
+- 遗留：手势中途 daemon 断连时余下事件丢弃，下次手势恢复（已知取舍）；
+  TRUSTED 屏若受 SELinux 阻挡仍需回落投影兜底，届时抱怨③ 只能缓解不能根治。

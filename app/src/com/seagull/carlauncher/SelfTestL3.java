@@ -20,6 +20,13 @@ public final class SelfTestL3 {
                 line("② launch(com.android.settings) → " + host.launch(ctx, "com.android.settings"));
                 Thread.sleep(1500);
                 line("③ verify → " + host.verify(ctx, "com.android.settings"));
+                // 批次 K 新增：TRUSTED 屏与角色状态（Android 14 任务不被拉回主屏的前提）
+                line("⑨ TRUSTED 角色 → " + RootOps.roleState()
+                        + "（grant→ " + RootOps.grantTrustedDisplayRole(ctx) + "）");
+                line("⑩ ensureOnDisplay(settings) → "
+                        + RootOps.ensureOnDisplay(ctx, "com.android.settings", host.displayId()));
+                line("   栈解析 → " + StackScan.findTaskOnDisplay(
+                        Caps.exec("am stack list"), "com.android.settings", 0));
                 line("④ launchViaRoot(com.android.settings) → " + host.launchViaRoot("com.android.settings"));
                 line("   PrivClient: " + PrivClient.status());
                 Thread.sleep(1500);

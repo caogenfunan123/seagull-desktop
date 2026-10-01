@@ -92,8 +92,9 @@ public class MirrorActivity extends BaseActivity {
     @Override protected void onResume() {
         super.onResume();
         updateDiag();
-        // 回到前台时 surface 可能重建，重新挂载
+        // 回到前台时 surface 可能重建，重新挂载；再过一会跑目标任务自愈
         ui.postDelayed(this::redeployIfPossible, 400);
+        ui.postDelayed(this::selfHeal, 1200);
     }
 
     @Override protected void onDestroy() {
@@ -174,11 +175,16 @@ public class MirrorActivity extends BaseActivity {
         }));
 
         TextView note = new TextView(this);
-        note.setText("机制说明\n"
-                + "· 建屏：MediaProjection.createVirtualDisplay（普通应用合法路径，不查 ADD_TRUSTED_DISPLAY）\n"
-                + "· 搬应用：root `am start --display <id> -f 0x18000000 -n <组件>`\n"
-                + "· 触摸：root `input -d <id> tap|swipe`（位移≥10px 判滑动，时长夹 50~2000ms）\n"
-                + "· 已知限制：被镜像应用自身若调用 startActivity 跳主屏，会跳回 display 0（音乐类应用常见）");
+        note.setText("机制说明（批次 K）\n"
+                + "· 建屏：优先 TRUSTED 直建（root 授 COMPANION_DEVICE_APP_STREAMING 角色\n"
+                + "  → DisplayManager.createVirtualDisplay + flag 候选降级 + 受信位校验），\n"
+                + "  失败回落 MediaProjection（PUBLIC|OWN_CONTENT_ONLY|PRESENTATION）\n"
+                + "· 尺寸：VD 严格按画布像素 1:1 建，画面不拉伸、触摸坐标零换算\n"
+                + "· 搬应用：root `am start --user 0 --display <id> -f 0x18800000 -n <组件>`\n"
+                + "  （守护进程反射优先，API 次之，命令兜底）\n"
+                + "· 触摸：原始事件中继（多指）或 `input -d <id> tap|swipe` 兜底\n"
+                + "· 自愈：回前台检测目标任务是否被拉回主屏（singleTask 常见），在则搬回\n"
+                + "· 为什么非 TRUSTED 不可：Android 14 只允许受信屏收留 home-affinity 任务");
         note.setTextColor(Skin.c(R.color.text_dim));
         note.setTextSize(10);
         LinearLayout.LayoutParams np = new LinearLayout.LayoutParams(-1, -2);
@@ -345,7 +351,8 @@ public class MirrorActivity extends BaseActivity {
     /* ------------------------- 部署 ------------------------- */
 
     private void attachTo(MirrorSlot slot, Surface surface, int w, int h) {
-        if (projection == null || surface == null || !surface.isValid()) return;
+        // 不再强制录屏 token：TRUSTED 屏不需要，兜底路径由 deploy 内部判
+        if (surface == null || !surface.isValid()) return;
         final int which = slot == slotA ? 1 : 2;
         final String pkg = loadPkg(which);
         if (pkg == null || pkg.isEmpty()) return;
@@ -356,42 +363,68 @@ public class MirrorActivity extends BaseActivity {
             boolean attached = s.attachSurface(surface, w, h, dpi);
             if (!attached) attached = s.deploy(projection, pkg, surface, w, h, dpi);
             final boolean ok = attached;   // 供内层 lambda 捕获
+            final boolean needProj = s.needsProjection();
             ui.post(() -> {
                 View wait = s == slotA ? waitA : waitB;
                 if (wait != null) wait.setVisibility(ok ? View.GONE : View.VISIBLE);
                 appendDiag(s.describe());
+                if (needProj) appendDiag("TRUSTED 屏不可用 → 先点「申请录屏授权」再选应用");
             });
         }, "deploy-" + pkg).start();
     }
 
     /**
-     * 建屏 + 搬应用。Surface 可能还没就绪，照样先建屏（已验证：MediaProjection 建屏
-     * 不依赖 Surface，root 也能把应用搬上去），Surface 一到再 attachSurface 出画面。
+     * 建屏 + 搬应用。Surface 可能还没就绪，照样先建屏（已验证：建屏不依赖 Surface，
+     * root 也能把应用搬上去），Surface 一到再 attachSurface 出画面。
+     *
+     * 尺寸口径（抱怨修复"画中画要跟随画布大小"）：VD 严格按 SurfaceView 的实际
+     * 像素尺寸建（1:1）—— 已量到用实测，没量到用槽位设计尺寸（全宽 - 左右留白
+     * × 槽高），绝不用屏幕一半之类的估算值：VD 和画布差一个像素，
+     * 画面就被作曲家拉伸、触摸坐标就偏。
+     *
+     * 授权口径：不强制录屏 token —— TRUSTED 直建（角色授予成功时）不需要它，
+     * 只有兜底路径才需要；deploy 内部会判，缺了会提示。
      */
     private void deployNow() {
-        if (projection == null) { appendDiag("先申请录屏授权"); return; }
-        // 用屏幕尺寸建屏（没有 Surface 时以槽的期望尺寸为准）
-        int w = getResources().getDisplayMetrics().widthPixels / 2;
-        int h = Math.max(540, getResources().getDisplayMetrics().heightPixels / 3);
+        // 用槽位设计尺寸建屏（没有 Surface 时以槽的期望尺寸为准）
+        int w = canvasW();
+        int h = canvasH();
         final int dpi = getResources().getDisplayMetrics().densityDpi;
         deploySlot(slotA, 1, w, h, dpi);
         deploySlot(slotB, 2, w, h, dpi);
     }
 
+    /** 槽位画布设计宽度：全宽减去 rootCol 左右 padding。 */
+    private int canvasW() {
+        if (svA != null && svA.getWidth() > 0) return svA.getWidth();
+        return Math.max(1, getResources().getDisplayMetrics().widthPixels - dp(32));
+    }
+
+    /** 槽位画布设计高度：slotBox 里写死的 dp(200)。 */
+    private int canvasH() {
+        if (svA != null && svA.getHeight() > 0) return svA.getHeight();
+        return dp(200);
+    }
+
     private void deploySlot(MirrorSlot slot, int which, int w, int h, int dpi) {
-        if (slot == null || projection == null) return;
+        if (slot == null) return;
         String pkg = loadPkg(which);
         if (pkg == null || pkg.isEmpty()) { appendDiag("槽 " + (which == 1 ? "A" : "B") + " 未选应用，跳过"); return; }
         SurfaceView svView = which == 1 ? svA : svB;
         Surface surf = (svView != null && svView.getHolder().getSurface() != null
                 && svView.getHolder().getSurface().isValid()) ? svView.getHolder().getSurface() : null;
+        // 已量到画布就用实测，没量到退回传入的设计尺寸 —— 保持 1:1
         final int fw = (svView != null && svView.getWidth() > 0) ? svView.getWidth() : w;
         final int fh = (svView != null && svView.getHeight() > 0) ? svView.getHeight() : h;
         new Thread(() -> {
+            // deploy 内部先试 TRUSTED 直建（角色授予/su 都在这个后台线程里跑），
+            // 失败且没有录屏 token 时返回 needsProjection —— 两条路都不通才提示授权
             boolean ok = slot.deploy(projection, pkg, surf, fw, fh, dpi);
+            final boolean needProj = slot.needsProjection();
             ui.post(() -> {
                 appendDiag("槽 " + (which == 1 ? "A" : "B") + " → " + slot.describe()
                         + (ok ? "" : "  [失败]"));
+                if (needProj) appendDiag("TRUSTED 屏不可用 → 先点「申请录屏授权」再选应用");
                 View wait = which == 1 ? waitA : waitB;
                 if (wait != null) wait.setVisibility(ok && slot.ready() ? View.GONE : View.VISIBLE);
             });
@@ -399,7 +432,6 @@ public class MirrorActivity extends BaseActivity {
     }
 
     private void redeployIfPossible() {
-        if (projection == null) return;
         if (slotA != null && !slotA.ready() && svA != null && svA.getHolder().getSurface() != null
                 && svA.getHolder().getSurface().isValid() && notEmpty(loadPkg(1))) {
             attachTo(slotA, svA.getHolder().getSurface(), svA.getWidth(), svA.getHeight());
@@ -408,6 +440,27 @@ public class MirrorActivity extends BaseActivity {
                 && svB.getHolder().getSurface().isValid() && notEmpty(loadPkg(2))) {
             attachTo(slotB, svB.getHolder().getSurface(), svB.getWidth(), svB.getHeight());
         }
+    }
+
+    /**
+     * 目标任务自愈（批次 K，carlink m10/m12 同款）：singleTask 应用在虚拟屏内部
+     * 跳转会落到默认屏、任务被整体拉走（主屏冒出全屏应用、画中画黑屏）。
+     * 回前台时检测一次，被拉走的搬回来。保守：解析不出栈结构就跳过，不重拉。
+     */
+    private void selfHeal() {
+        new Thread(() -> {
+            for (int i = 1; i <= 2; i++) {
+                MirrorSlot s = i == 1 ? slotA : slotB;
+                if (s == null || s.displayId() <= 0 || !s.ready()) continue;
+                String pkg = loadPkg(i);
+                if (pkg == null || pkg.isEmpty()) continue;
+                String out = RootOps.ensureOnDisplay(this, pkg, s.displayId());
+                if (!out.isEmpty()) {
+                    final String line = "自愈 槽" + (i == 1 ? "A" : "B") + ": " + out;
+                    ui.post(() -> appendDiag(line));
+                }
+            }
+        }, "self-heal").start();
     }
 
     private boolean notEmpty(String s) { return s != null && !s.isEmpty(); }
@@ -442,15 +495,11 @@ public class MirrorActivity extends BaseActivity {
             tv.setOnClickListener(v -> {
                 savePkg(pickingSlot, e.pkg);
                 appendDiag("槽 " + (pickingSlot == 1 ? "A" : "B") + " → " + e.pkg);
-                if (projection != null) {
-                    final int slotNo = pickingSlot;
-                    deploySlot(slotNo == 1 ? slotA : slotB, slotNo,
-                            getResources().getDisplayMetrics().widthPixels / 2,
-                            Math.max(540, getResources().getDisplayMetrics().heightPixels / 3),
-                            getResources().getDisplayMetrics().densityDpi);
-                } else {
-                    appendDiag("还没授权录屏，先点「申请录屏授权」");
-                }
+                // 不再强制录屏授权：TRUSTED 屏不需要，兜底路径缺 token 时
+                // deploy 内部返回 needsProjection，UI 会提示
+                final int slotNo = pickingSlot;
+                deploySlot(slotNo == 1 ? slotA : slotB, slotNo, canvasW(), canvasH(),
+                        getResources().getDisplayMetrics().densityDpi);
             });
             col.addView(tv);
         }
@@ -487,6 +536,7 @@ public class MirrorActivity extends BaseActivity {
     private void updateDiag() {
         String s = "uid=" + android.os.Process.myUid()
                 + "  root=" + Caps.hasRoot()
+                + "  TRUSTED角色=" + RootOps.roleState()
                 + "  投影服务=" + PipProjectionService.running
                 + "  token=" + (projection != null)
                 + "  活跃镜像屏=" + MirrorSlot.activeCount()

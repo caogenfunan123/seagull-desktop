@@ -27,14 +27,15 @@ public final class RootOps {
     private static final String TAG = "SeagullRootOps";
 
     /**
-     * 拉起 flags（核验自 smali）：
-     *   0x10000000 NEW_TASK   —— 必须有，root 启动无 Activity 上下文
-     *   0x08000000 MULTIPLE_TASK —— 强制在虚拟屏新建独立任务（否则可能复用主屏已有任务）
-     * 组合 = 0x18000000。加上 NEW_DOCUMENT(0x00080000) 得 0x18080000 亦可用。
-     * LAUNCH_FLAGS（字符串）给 am 命令用，LAUNCH_FLAGS_INT 给守护进程用。
+     * 拉起 flags（批次 K 修正，依据用户仓库 carlink-desktop-private m8 真机复盘）：
+     *   0x10000000 NEW_TASK           —— 必须有，root 启动无 Activity 上下文
+     *   0x08000000 MULTIPLE_TASK      —— 强制在虚拟屏新建独立任务（否则 singleTask 目标
+     *                                  会把主屏已有任务拉到前台，"点了却跳全屏"就是它）
+     *   0x00800000 EXCLUDE_FROM_RECENTS —— 镜像实例不进最近任务（参考版 0x18800000 同款）
+     * 组合 = 0x18800000。LAUNCH_FLAGS（字符串）给 am 命令用，LAUNCH_FLAGS_INT 给守护进程用。
      */
-    public static final String LAUNCH_FLAGS = "0x18000000";
-    public static final int LAUNCH_FLAGS_INT = 0x18000000;
+    public static final String LAUNCH_FLAGS = "0x18800000";
+    public static final int LAUNCH_FLAGS_INT = 0x18800000;
 
     private RootOps() {}
 
@@ -82,7 +83,9 @@ public final class RootOps {
      *      也不会被 am 的 argv 解析坑；
      *   ② 公开 API（部分 ROM 允许普通应用自己 startActivity 到虚拟屏）；
      *   ③ root `am start --display`（命令兜底，各 ROM 裁得最凶但普遍还在）。
-     * 返回 true 表示命令已下发成功（是否真的上去需另行 verify）。
+     * flags 用 0x18800000（含 EXCLUDE_FROM_RECENTS）；--user 0 显式指定用户
+     * （OneStep4 对标结论：工作资料/多用户下不带会落到错误用户）。
+     * 返回 true 表示命令已下发成功（是否真的上去需另行 verify / ensureOnDisplay）。
      */
     public static boolean launchOnDisplay(Context ctx, String pkg, int displayId) {
         String comp = resolveLauncher(ctx, pkg);
@@ -99,7 +102,7 @@ public final class RootOps {
             Log.i(TAG, "launchOnDisplay[" + pkg + "] 走 API 成功 -> display " + displayId);
             return true;
         }
-        String out = Caps.exec("am start --display " + displayId
+        String out = Caps.exec("am start --user 0 --display " + displayId
                 + " -f " + LAUNCH_FLAGS + " -n " + comp);
         boolean ok = out != null && !out.contains("Error") && !out.contains("Exception");
         Log.i(TAG, "launchOnDisplay " + comp + " -> display " + displayId + " ok=" + ok
@@ -113,7 +116,8 @@ public final class RootOps {
             i.addCategory(Intent.CATEGORY_LAUNCHER);
             i.setComponent(android.content.ComponentName.unflattenFromString(comp));
             if (i.getComponent() == null) return false;
-            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_MULTIPLE_TASK
+                    | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
             android.app.ActivityOptions opts = android.app.ActivityOptions.makeBasic();
             opts.setLaunchDisplayId(displayId);
             ctx.startActivity(i, opts.toBundle());
@@ -159,6 +163,70 @@ public final class RootOps {
         if (displayId <= 0) return false;
         String out = Caps.exec("input -d " + displayId + " " + cmd);
         return out != null;
+    }
+
+    /* ---------------- TRUSTED 虚拟屏（批次 K，carlink m13 同款） ---------------- */
+
+    private static volatile Boolean trustedRoleGranted = null;
+
+    /**
+     * 给本包授 COMPANION_DEVICE_APP_STREAMING 角色（root `cmd role add-role-holder`）。
+     * Android 14 的 RoleController 会给角色持有者授 ADD_TRUSTED_DISPLAY 等签名级权限，
+     * 本进程才能用 VIRTUAL_DISPLAY_FLAG_TRUSTED 建屏 —— 受信屏才收留得住
+     * home-affinity/TASK_ON_HOME 任务，这是"画中画任务被系统拉回主屏"的根治前提
+     * （对标 OneStep4 RootVirtualDisplayHost.ensureTrustedDisplayRole）。
+     * 幂等，进程内缓存；仅后台线程调用。
+     */
+    public static boolean grantTrustedDisplayRole(Context ctx) {
+        Boolean cached = trustedRoleGranted;
+        if (cached != null) return cached;
+        String pkg = ctx.getPackageName();
+        String out = Caps.exec("cmd role add-role-holder --user 0 "
+                + "android.app.role.COMPANION_DEVICE_APP_STREAMING " + pkg + " 0");
+        boolean ok = out != null && !out.toLowerCase().contains("error")
+                && !out.toLowerCase().contains("exception");
+        Log.i(TAG, "TRUSTED 角色授予(" + pkg + ") ok=" + ok
+                + " " + (out == null ? "" : out.trim()));
+        trustedRoleGranted = ok;
+        return ok;
+    }
+
+    /** 角色授予状态（诊断用，不触发 su）。 */
+    public static String roleState() {
+        Boolean g = trustedRoleGranted;
+        return g == null ? "未尝试" : (g ? "已授予 COMPANION_DEVICE_APP_STREAMING" : "授予失败");
+    }
+
+    /* ---------------- 目标自愈（批次 K，carlink m10/m12 同款） ---------------- */
+
+    /**
+     * singleTask 应用（网易云这类）在虚拟屏内部跳转时，新 activity 会落到默认屏，
+     * 任务整体被拉走 —— 主屏冒出全屏应用、画中画黑屏。这里检测并搬回。
+     *
+     * 保守策略（m12 真机教训）：检测不出栈结构就放弃，绝不主动重拉 ——
+     * 无脑重拉会在虚拟屏里叠出第二个目标任务，两个画中画一起坏。
+     * 优先守护进程反射 moveRootTaskToDisplay（Android 14+，root uid 直接过检查），
+     * 失败回退 `am task move-task <taskId> <displayId>`。
+     * 仅后台线程调用。
+     */
+    public static String ensureOnDisplay(Context ctx, String pkg, int displayId) {
+        if (pkg == null || pkg.isEmpty() || displayId <= 0) return "参数无效";
+        String out = Caps.exec("am stack list");
+        if (out == null) return "am stack list 无回显（su 不可用）";
+        if (StackScan.segments(out).isEmpty()) return "am stack list 输出无法解析，跳过自愈";
+        if (StackScan.isRunningOnDisplay(out, pkg, displayId)) return "目标已在虚拟屏";
+        // 源 = 主屏(display 0)上的目标任务；搬到目标屏
+        StackScan.TaskRef src = StackScan.findTaskOnDisplay(out, pkg, 0);
+        if (src == null) return "目标任务不在主屏也不在虚拟屏（可能已退出）";
+        PrivClient.init(ctx);
+        if (PrivClient.move(src.taskId, displayId)) {
+            return "已搬回虚拟屏（守护进程 moveRootTaskToDisplay " + src + "）";
+        }
+        String cmdOut = Caps.exec("am task move-task " + src.taskId + " " + displayId);
+        boolean ok = cmdOut != null && !cmdOut.toLowerCase().contains("error")
+                && !cmdOut.toLowerCase().contains("exception");
+        return ok ? "已搬回虚拟屏（am task move-task " + src + "）"
+                : "搬回失败：" + (cmdOut == null ? "无回显" : cmdOut.trim());
     }
 
     /* ---------------- 诊断 ---------------- */
