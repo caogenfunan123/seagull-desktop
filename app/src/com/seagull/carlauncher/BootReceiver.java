@@ -32,6 +32,12 @@ public class BootReceiver extends BroadcastReceiver {
         } catch (Throwable t) {
             Log.w(TAG, "拉回桌面失败", t);
         }
+        // 13.3 系统启动触发的任务
+        try {
+            TaskEngine.fireBoot(ctx);
+        } catch (Throwable t) {
+            Log.w(TAG, "开机任务失败", t);
+        }
         // 悬浮球跟着开机自启（依赖 LauncherModel 里的 ballEnabled）
         try {
             LauncherModel m = new LauncherModel(ctx);

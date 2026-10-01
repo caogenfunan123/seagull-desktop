@@ -168,12 +168,17 @@ public final class LauncherModel {
         public TaskAction action = TaskAction.OPEN_PIP;
         public String pkg = "";       // 目标应用包名
         public int delayMs = 5000;    // 延迟毫秒（DELAY 及前置延迟）
+        public int atMin = -1;         // TIMER 触发：当天第几分钟（0-1439），-1=没定
         public boolean enabled = true;
 
         public Task(String name) { this.name = name; }
         public String describe() {
-            return trigger.label + " → " + (delayMs > 0 ? "延迟 " + (delayMs / 1000) + " 秒 → " : "")
-                    + action.label + (pkg.isEmpty() ? "" : "（" + pkg + "）");
+            String when = trigger == TaskTrigger.TIMER && atMin >= 0
+                    ? String.format(java.util.Locale.getDefault(), "每天 %02d:%02d",
+                            atMin / 60, atMin % 60)
+                    : trigger.label;
+            return when + " → " + (delayMs > 0 ? "延迟 " + (delayMs / 1000) + " 秒 → " : "")
+                    + action.label + (pkg.isEmpty() ? "" : "（" + shortName(pkg) + "）");
         }
     }
 
@@ -371,6 +376,20 @@ public final class LauncherModel {
         if (key == null) return null;
         for (App a : allApps) if (a.key().equals(key)) return a;
         return null;
+    }
+
+    /** 按包名找应用（任务里只存了包名）。找不到就退回包名最后一段。 */
+    public String appNameOf(String pkg) {
+        if (pkg == null || pkg.isEmpty()) return "";
+        for (App a : allApps) if (pkg.equals(a.pkg)) return a.label;
+        return shortName(pkg);
+    }
+
+    /** 静态版：拿不到应用列表时（Task.describe 在静态上下文里）只截包名尾巴。 */
+    static String shortName(String pkg) {
+        if (pkg == null || pkg.isEmpty()) return "";
+        int i = pkg.lastIndexOf('.');
+        return i < 0 ? pkg : pkg.substring(i + 1);
     }
 
     public Drawable icon(App a) {
@@ -874,6 +893,7 @@ public final class LauncherModel {
                 to.put("ac", t.action.name());
                 to.put("p", t.pkg);
                 to.put("d", t.delayMs);
+                to.put("at", t.atMin);
                 to.put("e", t.enabled);
                 ta.put(to);
             }
@@ -1063,6 +1083,7 @@ public final class LauncherModel {
                     t.action = optEnum(to, "ac", TaskAction.class, t.action);
                     t.pkg = to.optString("p", "");
                     t.delayMs = to.optInt("d", 5000);
+                    t.atMin = to.optInt("at", -1);
                     t.enabled = to.optBoolean("e", true);
                     tasks.add(t);
                 }

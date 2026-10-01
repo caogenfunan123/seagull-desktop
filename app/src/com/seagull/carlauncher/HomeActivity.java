@@ -45,6 +45,7 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
     private DesktopView desktop;
     private LinearLayout topBar, bottomBar, mainCol;
     private TextView pipBox;
+    private IslandView island;
     private String lastSkin = "";
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -101,6 +102,10 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
             desktop.refresh();
             buildTopBar();
         }
+        if (island != null) {
+            island.bind(model);
+            island.setVisibility(model.islandEnabled ? View.VISIBLE : View.GONE);
+        }
         if (model != null && model.keepScreenOn) {
             getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         } else {
@@ -108,7 +113,17 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         }
         Weather.arm(this);          // 20 分钟一次；数据过期时立刻取
         Lyrics.start(this);         // 一秒一跳，组件条/菜园的歌词都从它出
+        Lyrics.addSink(islandSink);
+        TaskEngine.fireDesktop(this);   // 13.2 桌面启动触发（同进程只跑一次）
+        TaskEngine.arm(this);           // 13.4 定时任务每分钟看一眼
     }
+
+    /** 岛上的歌词一秒一跳。 */
+    private final Lyrics.Sink islandSink = new Lyrics.Sink() {
+        @Override public void onLyric(String[] w, String t, String a) {
+            if (model != null && model.islandLyric && island != null) island.bind(model);
+        }
+    };
 
     /** 主题 / 壁纸 / 字号变了才重画，避免每次回桌面都闪一下。 */
     private String skinSignature() {
@@ -127,6 +142,7 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         @Override public void run() {
             if (desktop != null) desktop.refresh();
             if (topBar != null) buildTopBar();
+            if (island != null && model != null) island.bind(model);
             ui.postDelayed(this, 30_000L);
         }
     };
@@ -162,6 +178,14 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         bottomBar.setBackgroundColor(Skin.bar(R.color.panel));
         bottomBar.setPadding(dp(10), dp(8), dp(10), dp(8));
         mainCol.addView(bottomBar, new LinearLayout.LayoutParams(-1, dp(62)));
+
+        // 野菜岛：顶部居中的胶囊，浮在桌面上（不进 mainCol，免得被布局挤动）
+        island = new IslandView(this);
+        island.setOnClickListener(v -> startActivity(new Intent(this, SettingsSectionActivity.class)
+                .putExtra(SettingsSectionActivity.EXTRA_SECTION, "island")));
+        island.setVisibility(model != null && model.islandEnabled ? View.VISIBLE : View.GONE);
+        root.addView(island, new FrameLayout.LayoutParams(dp(model == null ? 320 : model.islandWidth),
+                dp(40), android.view.Gravity.TOP | android.view.Gravity.CENTER_HORIZONTAL));
 
         // 画中画形态下的精简视图（系统 PiP 里只显示这一层）
         pipBox = new TextView(this);

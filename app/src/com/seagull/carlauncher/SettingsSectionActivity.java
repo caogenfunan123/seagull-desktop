@@ -729,7 +729,8 @@ public class SettingsSectionActivity extends BaseActivity {
                 actionRow((t.enabled ? "● " : "○ ") + t.name, t.describe(), v -> taskManage(t));
             }
         }
-        note("任务随桌面配置一起导出。任务引擎（自动执行）在后续版本接入，本页先管理配置。");
+        note("任务随桌面配置一起导出。桌面启动 / 系统启动在打开桌面时执行，定时任务每分钟对一次表。");
+        if (Caps.hasRoot()) actionRow("开机动画 · 生成一次", "本地素材合成（待开发）", null);
     }
 
     private void taskCreateFlow() {
@@ -745,22 +746,38 @@ public class SettingsSectionActivity extends BaseActivity {
             for (int i = 0; i < trs.length; i++) trNames[i] = trs[i].label;
             choiceDialog("触发条件", trNames, t.trigger.ordinal(), ti -> {
                 t.trigger = trs[ti];
-                LauncherModel.TaskAction[] acts = LauncherModel.TaskAction.values();
-                String[] acNames = new String[acts.length];
-                for (int i = 0; i < acts.length; i++) acNames[i] = acts[i].label;
-                choiceDialog("执行动作", acNames, t.action.ordinal(), ai -> {
-                    t.action = acts[ai];
-                    if (t.action == LauncherModel.TaskAction.OPEN_PIP
-                            || t.action == LauncherModel.TaskAction.OPEN_APP) {
-                        appPicker("选目标应用", a -> {
-                            t.pkg = a.pkg;
-                            askDelayThenAdd(t);
-                        });
-                    } else {
-                        askDelayThenAdd(t);
-                    }
-                });
+                if (t.trigger == LauncherModel.TaskTrigger.TIMER) { askAtMinThen(t, null); return; }
+                askActionThenAdd(t);
             });
+        });
+    }
+
+    /** 13.4 定时触发要问「每天几点」，问完再走原来的动作流程。 */
+    private void askAtMinThen(final LauncherModel.Task t, final Runnable next) {
+        inputDialog("每天几点几分（例：730 表示 07:30）", "-1", s -> {
+            try {
+                int v = Integer.parseInt(s.trim());
+                t.atMin = v < 0 || v > 1440 ? -1 : Math.min(v, 1439);
+            } catch (Throwable e) {
+                t.atMin = -1;
+            }
+            if (next == null) askActionThenAdd(t);
+            else next.run();
+        });
+    }
+
+    private void askActionThenAdd(final LauncherModel.Task t) {
+        LauncherModel.TaskAction[] acts = LauncherModel.TaskAction.values();
+        String[] acNames = new String[acts.length];
+        for (int i = 0; i < acts.length; i++) acNames[i] = acts[i].label;
+        choiceDialog("执行动作", acNames, t.action.ordinal(), ai -> {
+            t.action = acts[ai];
+            if (t.action == LauncherModel.TaskAction.OPEN_PIP
+                    || t.action == LauncherModel.TaskAction.OPEN_APP) {
+                appPicker("选目标应用", a -> { t.pkg = a.pkg; askDelayThenAdd(t); });
+            } else {
+                askDelayThenAdd(t);
+            }
         });
     }
 
@@ -860,18 +877,125 @@ public class SettingsSectionActivity extends BaseActivity {
         actionRow("体检报告", "能力探测汇总", v ->
                 msgDialog("体检报告", Caps.report(this)));
         actionRow("安装包指纹", "签名证书 SHA-256", v -> showFingerprint());
-        actionRow("检查更新", "当前为最新版本（本地清单待接入）", null);
+        actionRow("检查更新", "对比 GitHub 上最新的 release", v -> checkUpdate());
         note("不做登录、会员、云端存档、分享码。备份/恢复只走本地文件导入导出。");
+    }
+
+    /** 17.3 检查更新：打 GitHub releases/latest，跟本机 versionName 比。 */
+    private void checkUpdate() {
+        final String cur = currentVersionName();
+        toast("在问 GitHub…");
+        new Thread(() -> {
+            String tag = "", url = "", note2 = "";
+            try {
+                String json = httpText("https://api.github.com/repos/caogenfunan123/seagull-desktop/releases/latest");
+                org.json.JSONObject o = new org.json.JSONObject(json);
+                tag = o.optString("tag_name", "");
+                url = "";
+                org.json.JSONArray assets = o.optJSONArray("assets");
+                for (int i = 0; assets != null && i < assets.length(); i++) {
+                    org.json.JSONObject a = assets.optJSONObject(i);
+                    if (a != null && a.optString("name", "").endsWith(".apk")) {
+                        url = a.optString("browser_download_url", "");
+                        break;
+                    }
+                }
+            } catch (Throwable t) {
+                note2 = "查不到：" + (t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage());
+            }
+            final String fTag = tag, fUrl = url, fNote = note2;
+            runOnUiThread(() -> {
+                if (!fNote.isEmpty()) { msgDialog("检查更新", fNote); return; }
+                if (fTag.isEmpty()) { msgDialog("检查更新", "这个仓库还没有 release"); return; }
+                String latest = fTag.startsWith("v") ? fTag.substring(1) : fTag;
+                if (latest.equals(cur)) { msgDialog("检查更新", "当前 " + cur + " 已是最新"); return; }
+                String[] opts = fUrl.isEmpty() ? new String[]{"知道了"}
+                        : new String[]{"下载安装包（" + latest + "）", "知道了"};
+                choiceDialog("有新版本 " + latest, opts, -1, i -> {
+                    if (i == 0 && !fUrl.isEmpty()) downloadApk(fUrl, latest);
+                });
+            });
+        }).start();
+    }
+
+    /** 17.4 自更新：下到 filesDir，用系统安装器装（清单已申请 REQUEST_INSTALL_PACKAGES）。 */
+    private void downloadApk(String url, String ver) {
+        toast("开始下载 " + ver);
+        new Thread(() -> {
+            java.io.File out = null;
+            String err = "";
+            try {
+                out = new java.io.File(getFilesDir(), "seagull-" + ver + ".apk");
+                java.net.HttpURLConnection c =
+                        (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+                try {
+                    c.setConnectTimeout(8000);
+                    c.setReadTimeout(60000);
+                    try (java.io.InputStream in = c.getInputStream();
+                         java.io.FileOutputStream fo = new java.io.FileOutputStream(out)) {
+                        byte[] buf = new byte[8192];
+                        int n;
+                        while ((n = in.read(buf)) > 0) fo.write(buf, 0, n);
+                    }
+                } finally {
+                    try { c.disconnect(); } catch (Throwable ignore) {}
+                }
+            } catch (Throwable t) {
+                err = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
+            }
+            final java.io.File f = out;
+            final String e = err;
+            runOnUiThread(() -> {
+                if (f == null || !f.isFile()) { msgDialog("下载失败", e); return; }
+                try {
+                    Intent i = new Intent(Intent.ACTION_VIEW);
+                    i.setDataAndType(android.net.Uri.fromFile(f), "application/vnd.android.package-archive");
+                    i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(i);
+                } catch (Throwable t2) {
+                    msgDialog("装不上", "这台机器不允许安装未知来源：" + t2.getMessage()
+                            + "\n包在 " + f.getAbsolutePath());
+                }
+            });
+        }).start();
+    }
+
+    private static String httpText(String url) throws Exception {
+        java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+        try {
+            c.setConnectTimeout(6000);
+            c.setReadTimeout(8000);
+            c.setRequestProperty("Accept", "application/vnd.github+json");
+            java.io.InputStream in = c.getResponseCode() >= 400 ? c.getErrorStream() : c.getInputStream();
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
+            return bo.toString("UTF-8");
+        } finally {
+            try { c.disconnect(); } catch (Throwable ignore) {}
+        }
+    }
+
+    private String currentVersionName() {
+        try {
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Throwable t) {
+            return "1.0";
+        }
     }
 
     private void showFingerprint() {
         new Thread(() -> {
             String fp;
             try {
-                PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(),
-                        PackageManager.GET_SIGNATURES);
-                byte[] sig = pi.signatures[0].toByteArray();
                 MessageDigest md = MessageDigest.getInstance("SHA-256");
+                byte[] sig;
+                PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(),
+                        PackageManager.GET_SIGNING_CERTIFICATES);
+                android.content.pm.SigningInfo si = pi.signingInfo;
+                sig = si.hasMultipleSigners() ? si.getApkContentsSigners()[0].toByteArray()
+                        : si.getSigningCertificateHistory()[0].toByteArray();
                 StringBuilder sb = new StringBuilder();
                 for (byte b : md.digest(sig)) sb.append(String.format("%02X", b)).append(':');
                 fp = sb.substring(0, sb.length() - 1);
