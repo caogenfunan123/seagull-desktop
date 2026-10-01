@@ -193,6 +193,13 @@
   - [x] `TrustedFlagsCheck` 10 项 / `StackListCheck` 12 项自检（前者需 `-cp android-33.jar`）
 - [ ] 真机验证（用户操作）：① `am role get-role-holder` 是否真授到 ADD_TRUSTED_DISPLAY、dumpsys display 看 seagull-pipN flags 是否带 TRUSTED ② SELinux 放行角色授予/abstract socket ③ ROM 是否裁剪 `moveRootTaskToDisplay`
 
+### P2-6 画中画界面极简化 + 常驻 + 统一签名 ✅ 代码已写，CI 待验（批次 L）
+- [x] **抱怨「每次进入桌面还是应用界面」根因修复**：VD 生命周期改挂进程级 `MirrorHost`，退出画中画页只断 Surface 不拆屏（旧版 onDestroy 拆屏 → 屏上任务倒回默认屏 → 桌面冒全屏应用）
+- [x] **界面只剩两块画布**：删掉全部按钮/诊断区/机制说明/小标签；两画布各占半屏，长按选应用（GestureDetector 截长按 + 补 CANCEL 掐 TouchForward 残留笔画），对话框带「清空该槽」
+- [x] 部署后立即 `ensureOnDisplay` + 桌面 resume 自愈（`MirrorHost.healHome`，3s 节流）
+- [x] **统一签名**：`keystore/seagull-release.keystore`（唯一签名文件）+ build.sh/CI 改造 + secrets（SEAGULL_KEYSTORE_B64 / SEAGULL_KS_PASS）+ `docs/SIGNING.md`
+- [ ] 用户验收：装本包需先卸载旧版一次（旧包是随机签名，此后永久免卸载）；两次 CI 产物 `apksigner verify --print-certs` 指纹应一致
+
 ---
 
 ## 明确不做

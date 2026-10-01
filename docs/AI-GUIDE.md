@@ -53,6 +53,8 @@ app/
     TaskMover.java             窗口搬运（root）
     TouchForward.java          触摸转发（双通道：守护中继 / input 命令）
     MirrorSlot.java            虚拟屏镜像槽（两块；TRUSTED 优先 + 投影兜底 + 1:1）
+    MirrorHost.java            画中画槽进程级持有者：退出页面不断屏、桌面自愈、清空入口
+    MirrorActivity.java        画中画界面：只有两块画布，长按选应用，零按钮
     TrustedFlags.java          TRUSTED 屏 flag 候选/规范化/受信位校验
     StackScan.java             am stack list 解析：任务在哪个屏（纯 JVM，可自检）
     PrivCodec.java             守护进程线协议（纯 JVM，可自检）
@@ -65,6 +67,7 @@ docs/
   ARCHITECTURE.md              分层、模块职责、关键流程、存档 JSON（先读这个）
   DEVLOG.md                    每个批次的目标 / 改动 / 复盘（做错了也写进去）
   DEVICE-NOTES.md              车机与模拟器上的实测记录
+  SIGNING.md                   统一签名密钥：唯一钥匙位置、CI secret、备份/轮换/排障
   TECHNIQUES.md                平台限制与绕法
 FEATURE-MATRIX.md             205 条功能状态
 TODO.md                        P0~P2 顺序与验收口径
@@ -97,6 +100,20 @@ Skin.c(R.color.text)                   // 拿到当前主题下的实际色值
 
 清单里除 `HomeActivity` 外都没写 `configChanges`，所以旋转 = 重建 = 应用重启一次。
 所有「当前状态」必须能从 `LauncherModel` 还原，不要只放在内存字段里。
+
+### 4.4 画中画：退出页面绝不能拆屏
+
+VD 一旦 `release()`，系统会把屏上的任务倒回默认屏 —— 桌面立刻冒出全屏应用
+（用户原话："每次进入桌面还是应用界面"）。VD 归进程级 `MirrorHost`，
+`MirrorActivity.onDestroy` 只 `detachSurface()`；拆屏的唯一入口是
+`MirrorHost.clear()`（长按 → 清空该槽，会 force-stop 画中画里的应用）。
+
+### 4.5 签名：每个包必须是同一把钥匙
+
+build.sh 找不到 `keystore/seagull-release.keystore` 会现场生成临时密钥，
+签名每次都不同 → 覆盖安装报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`。
+改动构建链路前先读 `docs/SIGNING.md`；本地比对签名用
+`apksigner verify --print-certs` 看 SHA-256 是否一致。
 
 ---
 

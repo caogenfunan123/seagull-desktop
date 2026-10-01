@@ -239,7 +239,7 @@
 | # | 功能 | 状态 | 备注 |
 |---|---|---|---|
 | 11.1 | 画中画（系统 PiP，L2） | ✅ | 实测可用 |
-| 11.2 | 虚拟屏窗口（L3，root） | 🟡 | TRUSTED 屏优先：root 授 COMPANION_DEVICE_APP_STREAMING 角色 → DisplayManager 6 参 createVirtualDisplay + 5 组 flag 候选降级 + 受信位（1<<7）校验；失败回落 MediaProjection PUBLIC\|OWN_CONTENT_ONLY\|PRESENTATION。尺寸按 SurfaceView 实际像素 1:1；flags 0x18800000 含 EXCLUDE_FROM_RECENTS + `--user 0`；回前台目标任务自愈（ensureOnDisplay）。真机待验：dumpsys display 看 seagull-pipN flags 是否真带 TRUSTED |
+| 11.2 | 虚拟屏窗口（L3，root） | 🟡 | TRUSTED 屏优先（角色授予 + 5 组 flag 候选 + 受信位 1<<7 校验），失败回落 MediaProjection PUBLIC\|OWN_CONTENT_ONLY\|PRESENTATION。VD 按画布像素 1:1；flags 0x18800000 + `--user 0`；**进程级常驻：退出页面只断 Surface 不拆屏**（拆屏会把任务倒回主屏冒全屏，正是"进入桌面还是应用界面"的根因）；搬完立即自愈 + 桌面 resume 自愈（3s 节流） |
 | 11.3 | 每格绑应用 | ✅ | 镜像两槽各绑一个包名，存 `mirrorPkg1/2` |
 | 11.4 | 各应用显示大小（独立 dpi） | ⛔ | `setDisplayId` 被拒 |
 | 11.5 | 默认显示大小 | ⛔ | 同上 |
@@ -251,7 +251,7 @@
 | 11.11 | 全屏打开（关掉别的腾位置） | 🟡 | 回收要 root `am`（见 TaskMover），非 root 下不自动关 |
 | 11.12 | 兼容模式（强制应用可调整大小） | ✅ | `am task resizeable`（root），设置里可开关 |
 | 11.13 | 收回窗口 | 🟡 | 优先守护进程 `moveRootTaskToDisplay` 反射；ROM 无此方法时回退 root `am task move-to-display`，各家子命令不一致，按顺序试并把返回摊在设置页 |
-| 11.14 | 从边缘小标签拉回窗口 | 🟡 | 镜像槽右缘「收回」小标签；拉回走同一套命令 |
+| 11.14 | 从边缘小标签拉回窗口 | 🟡 | TaskMover 仍在（按开关）；画中画页按用户要求只留两块画布，小标签不再默认显示，拉回从对话框「清空该槽」或 TaskMover 入口走 |
 | 11.15 | 窗口最大宽度 | ✅ | 建屏尺寸按窗口大小算，不超屏 |
 | 11.16 | 窗口尺寸下限保护 | ⛔ | 需 L3 |
 | 11.17 | 窗口丢失重建 | ⛔ | 需 L3 |
@@ -265,7 +265,7 @@
 
 | # | 功能 | 状态 | 备注 |
 |---|---|---|---|
-| 12.1 | 触摸转发（点/滑/长按传进去） | ✅ | 双通道：守护进程在位走 `injectInputEvent` 原始事件中继（真多指/零命令开销，修掉了 `input -d N input tap` 双写 input 的 bug），不在位走 root `input` 命令 + TouchForward 手势状态机 |
+| 12.1 | 触摸转发（点/滑/长按传进去） | ✅ | 双通道：守护进程在位走 `injectInputEvent` 原始事件中继（真多指/零命令开销，修掉了 `input -d N input tap` 双写 input 的 bug），不在位走 root `input` 命令 + TouchForward 手势状态机。VD 1:1 后 scale 固定 1f；**画中画画布上的长按留给"选应用"，不转发** |
 | 12.2 | 触摸方式选择 | ✅ | 自动：root 守护进程中继优先，缺失回退 `input` 命令 / 无障碍通道二选一 |
 | 12.3 | 防误滑 | ✅ | `touchThreshold`（0~50px），低于阈值算点 |
 | 12.4 | 长按判定时长（0.3/0.5 秒） | ✅ | `longPressMs` + `TouchForward.longPress()` 发原地长 swipe |

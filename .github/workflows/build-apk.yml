@@ -37,18 +37,26 @@ jobs:
             "platforms;android-33" "build-tools;34.0.0" >/dev/null
           echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
 
-      # 签名不一致就装不上（INSTALL_FAILED_UPDATE_INCOMPATIBLE），所以签名密钥走 secret 还原。
-      # 没配 secret 时 build.sh 会现生成一把临时密钥，只适合自己试装。
-      - name: 还原签名密钥
+      # 签名不一致就装不上（INSTALL_FAILED_UPDATE_INCOMPATIBLE），所以统一签名密钥走 secret 还原：
+      #   SEAGULL_KEYSTORE_B64 = keystore/seagull-release.keystore 的 base64（唯一签名文件）
+      #   SEAGULL_KS_PASS      = 该密钥库/密钥的密码
+      # 配好后每个包签名完全一致，覆盖安装无需卸载。没配则现场生成临时密钥，只适合试装。
+      - name: 还原统一签名密钥
         env:
           KS_B64: ${{ secrets.SEAGULL_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.SEAGULL_KS_PASS }}
         run: |
-          if [ -n "$KS_B64" ]; then
-            printf '%s' "$KS_B64" | base64 -d > app/debug.keystore
-            echo "用固定签名密钥"
+          set -e
+          mkdir -p app/keystore
+          if [ -n "$KS_B64" ] && [ -n "$KS_PASS" ]; then
+            printf '%s' "$KS_B64" | base64 -d > app/keystore/seagull-release.keystore
+            printf 'alias=seagull-release\nksPass=%s\nkeyPass=%s\n' "$KS_PASS" "$KS_PASS" \
+              > app/keystore/seagull-release.properties
+            echo "用固定签名密钥（SEAGULL_KEYSTORE_B64 已还原）"
           else
-            echo "::warning::未配 SEAGULL_KEYSTORE_B64，本次为临时密钥，装到已有版本上会签名不一致"
+            echo "::warning::未配 SEAGULL_KEYSTORE_B64/SEAGULL_KS_PASS，本次为临时密钥，装到已有版本上会签名不一致"
           fi
+          echo "SEAGULL_KS_PASS=$KS_PASS" >> "$GITHUB_ENV"
 
       - name: 编译 APK
         env:

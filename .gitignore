@@ -7,6 +7,9 @@ app/sources.txt
 *.apk
 *.keystore
 
+# 统一签名密钥与密码（进 GitHub secret，不进仓库，见 docs/SIGNING.md）
+keystore/
+
 # 临时文件
 *.tmp
 *.log

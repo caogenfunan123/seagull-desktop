@@ -425,3 +425,58 @@ android-33.jar`）、`StackListCheck` 12 项、`StackListCheck` 依赖的纯 JVM
   虚拟屏内叠出两个目标任务，比不修更糟）。
 - 遗留：手势中途 daemon 断连时余下事件丢弃，下次手势恢复（已知取舍）；
   TRUSTED 屏若受 SELinux 阻挡仍需回落投影兜底，届时抱怨③ 只能缓解不能根治。
+
+## 批次 L — 画中画界面极简化（只要两个画布）+ 画中画常驻 + 统一签名
+
+**目标**：用户三条实测反馈：
+①「每次进入桌面还是应用界面，我要画中画界面」
+②「界面只要两个画布！长按选择应用！不要多余的东西！」
+③「弄个签名密钥统一签名，以后都用一个签名文件，写 md 文档」。
+
+**根因**
+
+- 「退出镜像页 → 桌面冒出全屏应用」的机制找到了：MirrorActivity.onDestroy
+  里 slotA.teardown() → vd.release()，**VD 一释放，系统就把屏上的任务
+  倒回默认屏**。用户每次退出画中画页回桌面，目标应用就全屏冒出来——
+  这正是「每次进入桌面还是应用界面」。
+- 签名漂移实锤：拉两次 CI 产物比对，证书 SHA-256 不同
+  （`5e1bc2…` vs `eb7204…`）。旧 build.sh 在没有 secret 时每次现场
+  生成随机密钥 → 每个包签名都不一样 → 覆盖安装必失败，只能卸载重装。
+
+**改动**
+
+- 新增 `MirrorHost.java`：画中画槽的进程级持有者。VD 生命周期挂进程，
+  退出 MirrorActivity 只 `detachSurface()`（画面断、屏与应用留着），
+  再进来把 Surface 挂回同一块 VD；`healHome()` 给桌面 onResume 调
+  （节流 3s，保守自愈）；录屏被撤销时只拆投影屏（受信屏不依赖投影）。
+- 重写 `MirrorActivity`：界面只有两块画布（各占半屏，黑底），
+  长按画布选应用（GestureDetector 截走长按、先给 TouchForward 补一个
+  CANCEL 掐掉残留笔画，再弹应用列表；对话框带「清空该槽」），
+  点/滑/拖照常转发进画中画。删掉全部按钮、诊断区、机制说明；
+  空画布只留一行居中提示。部署失败/缺授权自动补弹录屏授权框。
+- `MirrorSlot`：构造改用 applicationContext（进程级常驻不泄漏 Activity）；
+  deploy 成功搬完应用立刻 `ensureOnDisplay` 自愈一次（不等用户切页面）；
+  teardown 只由 MirrorHost.clear 触发。
+- `HomeActivity.onResume` 接 `MirrorHost.healHome(this)`。
+- 统一签名：生成 `app/keystore/seagull-release.keystore`（RSA 2048 /
+  10000 天 / alias seagull-release），build.sh 第 7 步改用它
+  （密码：env `SEAGULL_KS_PASS` > properties > 兜底），CI 增加
+  「还原统一签名密钥」步（`SEAGULL_KEYSTORE_B64` + `SEAGULL_KS_PASS`），
+  `.gitignore` 加 `keystore/`，两个 secret 已用 PAT 设进仓库，
+  新写 `docs/SIGNING.md`（含签名漂移实锤表、备份/轮换/排障）。
+
+**验证**：`typecheck.sh` 通过；自检不变（批次 K 的 TrustedFlagsCheck 10 项 /
+StackListCheck 12 项此前已过，本批未动其输入）。签名一致性需 CI 产物比对：
+两次构建的 `apksigner verify --print-certs` 应打出同一 SHA-256。
+
+**复盘**
+
+- 做对：先拉旧产物做取证再动手，签名漂移从"疑似"变"实锤"；
+  把"退出拆屏"这条机制从代码里读出来，没有盲猜。
+- 决策：VD 常驻 = 画中画里的应用退出页面后继续在后台跑（音乐类正是
+  想要的行为）；要停只能长按 → 清空该槽（force-stop）。
+- 遗留：TRUSTED 角色在其设备上是否真授到，仍要用户回传 logcat
+  （`SeagullRootOps` 的"TRUSTED 角色授予"行 + `dumpsys display` 的
+  seagull-pipN flags）；不成立则走投影兜底 + 自愈，画中画会偶发被拉走。
+- 换签名的代价：用户设备上已装的旧版是随机签名，本包需卸载重装一次，
+  之后永久免卸载。

@@ -17,9 +17,20 @@ export PATH="$BT:$JAVA_HOME/bin:$PATH"
 
 MIN_API=29
 TARGET_API=33
-KS="$P/debug.keystore"
-KS_PASS=android
-KS_ALIAS=seagull
+
+# 统一签名密钥（批次 L 起，详见 docs/SIGNING.md）：
+#   keystore/seagull-release.keystore   唯一签名文件，本地与 CI 同一把
+#   密码优先级：SEAGULL_KS_PASS 环境变量 > keystore/seagull-release.properties > 兜底默认值
+# keystore/ 与 *.properties 都在 .gitignore 里，密钥本身不进仓库；
+# CI 从 secret SEAGULL_KEYSTORE_B64 还原同一把钥匙，保证每个包签名一致。
+KS_DIR="$P/keystore"
+KS="$KS_DIR/seagull-release.keystore"
+KS_ALIAS=seagull-release
+KS_PASS="${SEAGULL_KS_PASS:-}"
+if [ -z "$KS_PASS" ] && [ -f "$KS_DIR/seagull-release.properties" ]; then
+  KS_PASS="$(grep '^ksPass=' "$KS_DIR/seagull-release.properties" | head -1 | cut -d= -f2-)"
+fi
+[ -n "$KS_PASS" ] || KS_PASS=seagull-release
 
 OUT="$P/out"
 # 每次构建用独立子目录，避免清空历史产物（构建机不删文件）
@@ -76,6 +87,9 @@ fi
 
 echo "== 7/7 签名 =="
 if [ ! -f "$KS" ]; then
+  echo "   未找到统一签名密钥，现场生成一把（仅本次有效！签名会和以前的包不一致）"
+  echo "   要一劳永逸：把 keystore/seagull-release.keystore 配成 CI secret，见 docs/SIGNING.md"
+  mkdir -p "$KS_DIR"
   "$JAVA_HOME/bin/keytool" -genkeypair -keystore "$KS" -alias "$KS_ALIAS" \
     -keyalg RSA -keysize 2048 -validity 10000 \
     -storepass "$KS_PASS" -keypass "$KS_PASS" \

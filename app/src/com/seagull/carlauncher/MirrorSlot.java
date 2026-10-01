@@ -60,10 +60,11 @@ public final class MirrorSlot {
     }
 
     public MirrorSlot(Context ctx, String name) {
-        this.ctx = ctx;
+        // 进程级常驻（MirrorHost 持有）：绝不能攥着 Activity 不放，存 app context
+        this.ctx = ctx.getApplicationContext() != null ? ctx.getApplicationContext() : ctx;
         this.name = name;
         // 给 PrivClient 一个上下文：守护进程靠 base.apk 路径拉起，早给早生效
-        PrivClient.init(ctx);
+        PrivClient.init(this.ctx);
     }
 
     public int displayId() { return displayId; }
@@ -176,6 +177,15 @@ public final class MirrorSlot {
 
         boolean ok = RootOps.launchOnDisplay(ctx, pkg, displayId);
         if (!ok) { lastError = "am start --display " + displayId + " 失败"; teardownVd(); return false; }
+
+        // 部署即自愈一次（批次 L）：singleTask 目标落地瞬间就可能被系统拉回默认屏，
+        // 不等用户切页面。保守：am stack list 解析不出就不动（见 ensureOnDisplay）。
+        try {
+            String heal = RootOps.ensureOnDisplay(ctx, pkg, displayId);
+            Log.i(TAG, "[" + name + "] 部署后自愈: " + heal);
+        } catch (Throwable t) {
+            Log.w(TAG, "[" + name + "] 部署后自愈异常: " + t);
+        }
 
         touchFor().setDisplay(displayId, 1f);   // VD 与 surface 1:1，缩放固定 1
         lastSig = sig;

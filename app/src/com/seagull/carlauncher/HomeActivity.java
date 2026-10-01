@@ -114,6 +114,8 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         Weather.arm(this);          // 20 分钟一次；数据过期时立刻取
         Lyrics.start(this);         // 一秒一跳，组件条/菜园的歌词都从它出
         Lyrics.addSink(islandSink);
+        // 常驻画中画被系统拉回主屏时搬回去（批次 L；节流在 MirrorHost 里）
+        MirrorHost.healHome(this);
         TaskEngine.fireDesktop(this);   // 13.2 桌面启动触发（同进程只跑一次）
         TaskEngine.arm(this);           // 13.4 定时任务每分钟看一眼
     }
