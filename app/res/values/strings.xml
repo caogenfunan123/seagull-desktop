@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">海鸥桌面</string>
+    <string name="settings_title">桌面设置</string>
+    <string name="window_test_title">窗口能力自检</string>
+    <string name="all_apps">全部应用</string>
+    <string name="dock_empty">Dock 为空 — 长按应用图标可固定</string>
+    <string name="hint_apps">应用</string>
+    <string name="hint_settings">设置</string>
+    <string name="hint_windows">窗口</string>
+    <string name="root_panel_title">root 功能</string>
+    <string name="root_panel_sub">亮度 / 音量 / 开关 / 进程 / 权限，全部真实执行</string>
+    <string name="vd_title">L3 虚拟屏窗口</string>
+    <string name="pip_enter">小窗</string>
+    <string name="pip_hint">点图标进画中画，长按固定到 Dock</string>
+    <string name="mirror_title">L3 镜像小窗</string>
+    <string name="mirror_sub">把应用真正搬进虚拟屏，触摸可回注</string>
+    <string name="folder_title">文件夹</string>
+    <string name="layout_title">布局与组件</string>
+</resources>

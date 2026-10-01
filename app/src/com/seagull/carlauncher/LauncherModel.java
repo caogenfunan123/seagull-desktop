@@ -1,0 +1,902 @@
+package com.seagull.carlauncher;
+
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.LauncherApps;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
+import android.graphics.drawable.Drawable;
+import android.os.UserHandle;
+import android.util.Log;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * 桌面数据层：应用清单 + 全部配置的单一事实源。
+ *
+ * 对齐野菜桌面的设置结构（去掉账号与云端组后剩 5 组 / 18 分区）：
+ *   桌面       → 布局 | Dock 栏 | 快捷栏 | 菜园 | 小白点
+ *   外观       → 主题与壁纸 | 屏幕 | 野菜岛
+ *   天气与歌词 → 天气 | 歌词
+ *   高级功能   → 窗口 | 触摸 | 自动化任务 | 开机动画
+ *   系统与工具 → 系统 | 车机工具 | 关于
+ *
+ * 所有配置落在 SharedPreferences（文件 HomeActivity.PREFS，主键 json_layout）。
+ * UI 只读写这一处，不各自开 prefs 文件。
+ */
+public final class LauncherModel {
+
+    private static final String TAG = "SeagullModel";
+    private static final String PREFS = HomeActivity.PREFS;
+    private static final String K_LAYOUT = "json_layout";
+
+    /* ==================== 枚举 ==================== */
+
+    /** 主屏分区模式（桌面自身的摆法，非窗口布局）。 */
+    public enum Mode {
+        GRID("标准网格"),
+        DENSE("紧凑网格"),
+        DOCK_ONLY("只留 Dock"),
+        WIDGET_TOP("上面组件，下面应用"),
+        WIDGET_BOTTOM("主屏下方一条组件"),
+        WIDGET_RIGHT("左侧应用，右组件条"),
+        TWO_ZONE("主副两栏");
+
+        public final String label;
+        Mode(String l) { this.label = l; }
+    }
+
+    /** Dock 位置。 */
+    public enum DockPos {
+        BOTTOM("底部"), LEFT("左侧"), RIGHT("右侧"), HIDDEN("不显示");
+        public final String label;
+        DockPos(String l) { this.label = l; }
+    }
+
+    /** 日夜模式。 */
+    public enum DayNight {
+        AUTO("跟随系统"), DARK("深色"), LIGHT("浅色");
+        public final String label;
+        DayNight(String l) { this.label = l; }
+    }
+
+    /** 屏幕方向。 */
+    public enum Orientation {
+        AUTO("跟随系统"), LANDSCAPE("固定横屏"), PORTRAIT("固定竖屏");
+        public final String label;
+        Orientation(String l) { this.label = l; }
+    }
+
+    /** 天气城市来源。 */
+    public enum CitySource {
+        AUTO_GPS("自动（本机定位）"), AUTO_NET("按网络判断"), MANUAL("手动指定");
+        public final String label;
+        CitySource(String l) { this.label = l; }
+    }
+
+    /** 歌词来源。 */
+    public enum LyricSource {
+        PLAYER("播放器自带"), LOCAL("只用本地歌词"), ONLINE("在线歌词（酷狗）");
+        public final String label;
+        LyricSource(String l) { this.label = l; }
+    }
+
+    /** 性能档位。 */
+    public enum Perf {
+        LOW("低配"), MID("中配"), HIGH("高配");
+        public final String label;
+        Perf(String l) { this.label = l; }
+    }
+
+    /** 菜园摆法。 */
+    public enum GardenStyle {
+        CENTER_CLOCK("居中大钟"),
+        LEFT_CLOCK_BOTTOM_LYRIC("左上时钟 + 底部歌词"),
+        BIG_CLOCK_DATE("大字时间与日期");
+        public final String label;
+        GardenStyle(String l) { this.label = l; }
+    }
+
+    /** 自动化任务触发条件。 */
+    public enum TaskTrigger {
+        DESKTOP_START("桌面启动"), SYSTEM_BOOT("系统启动"), TIMER("定时");
+        public final String label;
+        TaskTrigger(String l) { this.label = l; }
+    }
+
+    /** 自动化任务执行动作。 */
+    public enum TaskAction {
+        DELAY("延迟"), OPEN_PIP("在画中画打开应用"),
+        REMOVE_FROM_HOME("移除主屏任务"), OPEN_APP("打开应用");
+        public final String label;
+        TaskAction(String l) { this.label = l; }
+    }
+
+    public static final int COLS_DEFAULT = 5;
+    public static final int COLS_DENSE = 6;
+    public static final int WALL_LIB_MAX = 24;      // 壁纸库上限（原文案：最多存 24 项）
+    public static final int TASK_MAX = 20;          // 原文案：最多 20 条
+    public static final int WIDGET_MAX = 4;         // 原文案：组件条最多放 4 个组件
+    public static final int QUICKBAR_MAX = 6;       // 快捷栏格数
+    public static final int DOCK_MAX = 8;
+
+    /* ==================== 数据结构 ==================== */
+
+    public static final class App {
+        public final String pkg;
+        public final String cls;      // 可为空（用包名启动）
+        public final String label;
+        public boolean dock;          // 是否在 Dock 栏
+
+        public App(String pkg, String cls, String label) {
+            this.pkg = pkg; this.cls = cls; this.label = label;
+        }
+        public String key() { return pkg + (cls == null || cls.isEmpty() ? "" : "/" + cls); }
+    }
+
+    /** 文件夹：一组应用 + 名字。 */
+    public static final class Folder {
+        public String name;
+        public final List<String> keys = new ArrayList<>();
+        public Folder(String name) { this.name = name; }
+    }
+
+    /** 快捷栏一格：放应用或功能按钮。 */
+    public static final class QuickSlot {
+        public String key;        // 应用 key；功能按钮用 @fn:<name>
+        public String label;      // 功能按钮显示名
+        public QuickSlot(String key, String label) { this.key = key; this.label = label; }
+        public boolean isFunc() { return key != null && key.startsWith("@fn:"); }
+    }
+
+    /** 自动化任务：触发条件 → 动作。 */
+    public static final class Task {
+        public String name;
+        public TaskTrigger trigger = TaskTrigger.DESKTOP_START;
+        public TaskAction action = TaskAction.OPEN_PIP;
+        public String pkg = "";       // 目标应用包名
+        public int delayMs = 5000;    // 延迟毫秒（DELAY 及前置延迟）
+        public boolean enabled = true;
+
+        public Task(String name) { this.name = name; }
+        public String describe() {
+            return trigger.label + " → " + (delayMs > 0 ? "延迟 " + (delayMs / 1000) + " 秒 → " : "")
+                    + action.label + (pkg.isEmpty() ? "" : "（" + pkg + "）");
+        }
+    }
+
+    /** 壁纸库一项。 */
+    public static final class Wall {
+        public String name;
+        public String path;      // 本机文件路径
+        public boolean used;     // 是否正在用
+        public Wall(String name, String path) { this.name = name; this.path = path; }
+    }
+
+    /* ==================== 状态：应用与桌面 ==================== */
+
+    public final List<App> allApps = new ArrayList<>();
+    public final List<String> pinned = new ArrayList<>();     // 主屏固定顺序（key）
+    public final List<Folder> folders = new ArrayList<>();
+    public final List<String> dock = new ArrayList<>();       // Dock 固定顺序（key）
+    public Mode mode = Mode.GRID;
+    public boolean showLabels = true;
+    /** 组件条槽位：0=时钟 1=日期 2=电量 3=内存 4=天气 */
+    public final List<Integer> widgets = new ArrayList<>();
+
+    /* ==================== 状态：布局（设置→桌面→布局） ==================== */
+
+    /** 窗口布局预设 id（0~14，见 LayoutPresets）。 */
+    public int layoutPreset = 0;
+    /** 组件条透明度 0~100（往右拉越透明）。 */
+    public int widgetStripAlpha = 100;
+    /** 自定义布局名（"自己摆的"）。 */
+    public String customLayoutName = "";
+
+    /* ==================== 状态：Dock 栏 ==================== */
+
+    public DockPos dockPos = DockPos.BOTTOM;
+    public int dockCount = 5;          // 放几个
+    public int dockWidth = 76;         // 底部时=高度(dp)
+    public int dockGap = 8;            // 间距(dp)
+    public int dockIconSize = 44;      // 图标大小(dp)
+    public int dockAlpha = 100;        // 透明度 0~100
+    public boolean dockAutoHide = false;
+    public boolean dockFixed = false;  // 固定（侧栏满了也不收起）
+    public boolean dockShowClock = true;
+
+    /* ==================== 状态：快捷栏 ==================== */
+
+    public final List<QuickSlot> quickbar = new ArrayList<>();
+    public String quickBtn1 = "";     // 快捷开关 1（@fn:xxx）
+    public String quickBtn2 = "";     // 快捷开关 2
+
+    /* ==================== 状态：菜园 ==================== */
+
+    public boolean gardenEnabled = true;
+    public int gardenDim = 60;                 // 壁纸压暗 0~100
+    public GardenStyle gardenStyle = GardenStyle.CENTER_CLOCK;
+
+    /* ==================== 状态：小白点 ==================== */
+
+    public boolean ballEnabled = false;
+    public int ballX = 40;      // 位置记在本机
+    public int ballY = -1;      // -1 = 默认左下角
+    public int ballSize = 48;
+
+    /* ==================== 状态：外观 ==================== */
+
+    public String themeId = "leaf_shadow";     // 见 Theme
+    public String customAccent = "";           // 自定义主题色 #RRGGBB
+    public DayNight dayNight = DayNight.DARK;
+    public String wallDay = "";                // 白天壁纸路径
+    public String wallNight = "";              // 夜间壁纸路径
+    public int wallDim = 0;                    // 背景遮罩 0~100
+    public final List<Wall> wallLib = new ArrayList<>();
+    public int fontScale = 100;                // 全局字号 50~150
+
+    /* ==================== 状态：屏幕 ==================== */
+
+    public int marginH = 12;        // 屏幕外边距（左右）
+    public int marginV = 8;         // 屏幕外边距（上下）
+    public int gap = 6;             // 窗口之间的缝
+    public Orientation orientation = Orientation.AUTO;
+    public boolean keepScreenOn = false;
+    public boolean hideSystemBars = false;
+    public boolean topInfoBar = true;          // 顶部信息栏
+    public boolean autoNetworkTime = true;
+
+    /* ==================== 状态：野菜岛 ==================== */
+
+    public boolean islandEnabled = false;
+    public int islandOffsetY = 0;      // 距顶部（挖孔/圆角）
+    public int islandWidth = 320;
+    public boolean islandLyric = false;
+
+    /* ==================== 状态：天气 ==================== */
+
+    public CitySource citySource = CitySource.MANUAL;
+    public String weatherCity = "";
+    public long weatherUpdatedAt = 0L;
+
+    /* ==================== 状态：歌词 ==================== */
+
+    public LyricSource lyricSource = LyricSource.PLAYER;
+    public int lyricLines = 0;          // 0=自动（横屏5/竖屏3）
+    public int lyricSize = 100;         // 字号 %（跟随 fontScale）
+    public int lyricOffsetMs = 0;       // 对时偏移（提前为负）
+    public boolean lyricStatusBar = false;
+    public boolean lyricNotification = false;
+    public boolean lyricBluetooth = true;
+    public int mediaCardLines = 3;
+    public final Set<String> lyricHidden = new HashSet<>();   // "这首不显示歌词"
+
+    /* ==================== 状态：窗口 ==================== */
+
+    public Perf perf = Perf.MID;
+    public boolean compatMode = false;          // 强制应用可调整大小
+    public int bgKeep = 1;                      // 后台保留几个窗口
+    public int winDefaultScale = 100;           // 默认显示大小 %
+    public final Map<String, Integer> appScale = new LinkedHashMap<>();  // 每应用独立缩放
+    public boolean winLockMap = true;           // 地图窗口默认锁定
+    public boolean releaseOnLock = false;       // 锁屏后释放画中画
+    public boolean pauseOnScreenOff = false;    // 息屏暂停
+
+    /* ==================== 状态：触摸 ==================== */
+
+    public int touchThreshold = 10;      // 防误滑阈值 px
+    public int longPressMs = 500;        // 长按判定（300/500）
+    public boolean useAccessibility = true;   // 公开版主通道
+    public boolean useRootInput = true;       // root 通道
+
+    /* ==================== 状态：自动化任务 ==================== */
+
+    public final List<Task> tasks = new ArrayList<>();
+
+    /* ==================== 状态：系统 ==================== */
+
+    public boolean autoHome = true;
+
+    /* ==================== 运行时 ==================== */
+
+    private final Context ctx;
+
+    public LauncherModel(Context ctx) {
+        this.ctx = ctx.getApplicationContext();
+        loadApps();
+        load();
+    }
+
+    public Context context() { return ctx; }
+
+    /* ==================== 读取已装应用 ==================== */
+
+    public void loadApps() {
+        allApps.clear();
+        PackageManager pm = ctx.getPackageManager();
+        Intent main = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
+        List<ResolveInfo> ris;
+        try {
+            ris = pm.queryIntentActivities(main, PackageManager.MATCH_ALL);
+        } catch (Throwable t) {
+            Log.w(TAG, "枚举应用失败", t); return;
+        }
+        Map<String, App> uniq = new LinkedHashMap<>();
+        for (ResolveInfo ri : ris) {
+            if (ri == null || ri.activityInfo == null) continue;
+            String p = ri.activityInfo.packageName;
+            String c = ri.activityInfo.name;
+            if (p == null || c == null) continue;
+            CharSequence lbl = ri.loadLabel(pm);
+            App a = new App(p, c, lbl == null ? p : lbl.toString());
+            if (!uniq.containsKey(a.key())) uniq.put(a.key(), a);
+        }
+        allApps.addAll(uniq.values());
+        Collections.sort(allApps, (x, y) -> x.label.compareToIgnoreCase(y.label));
+    }
+
+    public App find(String key) {
+        if (key == null) return null;
+        for (App a : allApps) if (a.key().equals(key)) return a;
+        return null;
+    }
+
+    public Drawable icon(App a) {
+        if (a == null) return null;
+        try {
+            return ctx.getPackageManager().getApplicationIcon(a.pkg);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 启动应用。asNewTask=true 时另开任务栈。 */
+    public void launch(App a, boolean asNewTask) {
+        if (a == null) return;
+        try {
+            Intent i = new Intent(Intent.ACTION_MAIN);
+            i.addCategory(Intent.CATEGORY_LAUNCHER);
+            i.setComponent(new ComponentName(a.pkg, a.cls));
+            if (asNewTask) i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            i.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+            ctx.startActivity(i);
+        } catch (Throwable t) {
+            Log.w(TAG, "启动失败 " + a.label, t);
+        }
+    }
+
+    /* ==================== 主屏与文件夹 ==================== */
+
+    /** 主屏可见 key 列表：pinned ∪ 未被任何文件夹收走的应用（首次自动填满）。 */
+    public List<String> homeKeys() {
+        Set<String> inFolder = new HashSet<>();
+        for (Folder f : folders) inFolder.addAll(f.keys);
+        List<String> out = new ArrayList<>();
+        for (String k : pinned) if (!out.contains(k)) out.add(k);
+        if (out.isEmpty()) {
+            for (App a : allApps) {
+                if (inFolder.contains(a.key())) continue;
+                out.add(a.key());
+            }
+        }
+        return out;
+    }
+
+    public Folder folderOf(String key) {
+        for (Folder f : folders) if (f.keys.contains(key)) return f;
+        return null;
+    }
+
+    /** 把 src 合并进 dst（拖拽压合）。dst 若已在某文件夹，则并入该文件夹。 */
+    public Folder mergeInto(String dstKey, String srcKey) {
+        if (dstKey == null || srcKey == null || dstKey.equals(srcKey)) return null;
+        Folder df = folderOf(dstKey);
+        if (df == null) {
+            df = new Folder("文件夹");
+            df.keys.add(dstKey);
+            folders.add(df);
+        }
+        Folder sf = folderOf(srcKey);
+        if (sf != null && sf != df) {
+            df.keys.addAll(sf.keys);
+            folders.remove(sf);
+        } else if (!df.keys.contains(srcKey)) {
+            df.keys.add(srcKey);
+        }
+        pinned.remove(srcKey);
+        save();
+        return df;
+    }
+
+    public void renameFolder(Folder f, String name) {
+        if (f != null && name != null && !name.trim().isEmpty()) f.name = name.trim();
+        save();
+    }
+
+    /** 解散文件夹：内容回到主屏，文件夹消失。 */
+    public void dissolveFolder(Folder f) {
+        if (f == null) return;
+        for (String k : f.keys) if (!pinned.contains(k)) pinned.add(k);
+        folders.remove(f);
+        save();
+    }
+
+    public void removeFromFolder(Folder f, String key) {
+        if (f == null) return;
+        f.keys.remove(key);
+        if (!pinned.contains(key)) pinned.add(key);
+        if (f.keys.size() <= 1) dissolveFolder(f);
+        else save();
+    }
+
+    /** 把列表里的一项移进文件夹。 */
+    public void addToFolder(Folder f, String key) {
+        if (f == null || key == null || f.keys.contains(key)) return;
+        Folder old = folderOf(key);
+        if (old != null && old != f) old.keys.remove(key);
+        f.keys.add(key);
+        pinned.remove(key);
+        save();
+    }
+
+    /* ==================== 固定 / 取消 ==================== */
+
+    public void pin(String key)   { if (key != null && !pinned.contains(key)) { pinned.add(key); save(); } }
+    public void unpin(String key) { pinned.remove(key); save(); }
+    public boolean isPinned(String key) { return pinned.contains(key); }
+
+    public void toggleDock(String key) {
+        if (key == null) return;
+        if (dock.contains(key)) dock.remove(key);
+        else if (dock.size() < DOCK_MAX) dock.add(key);
+        save();
+    }
+
+    public boolean inDock(String key) { return dock.contains(key); }
+
+    /* ==================== 组件条 ==================== */
+
+    public void toggleWidget(int id) {
+        if (widgets.contains(id)) widgets.remove(id);
+        else if (widgets.size() < WIDGET_MAX) widgets.add(id);
+        save();
+    }
+    public boolean hasWidget(int id) { return widgets.contains(id); }
+
+    /* ==================== 快捷栏 ==================== */
+
+    public void setQuickSlot(int idx, String key, String label) {
+        while (quickbar.size() <= idx) quickbar.add(new QuickSlot("", ""));
+        quickbar.set(idx, new QuickSlot(key == null ? "" : key, label == null ? "" : label));
+        save();
+    }
+
+    public void clearQuickSlot(int idx) {
+        if (idx >= 0 && idx < quickbar.size()) {
+            quickbar.set(idx, new QuickSlot("", ""));
+            save();
+        }
+    }
+
+    /* ==================== 壁纸库 ==================== */
+
+    public boolean addWall(String name, String path) {
+        if (wallLib.size() >= WALL_LIB_MAX) return false;
+        wallLib.add(new Wall(name, path));
+        save();
+        return true;
+    }
+
+    public void removeWall(Wall w) {
+        wallLib.remove(w);
+        if (w != null) {
+            if (w.path != null && w.path.equals(wallDay)) wallDay = "";
+            if (w.path != null && w.path.equals(wallNight)) wallNight = "";
+        }
+        save();
+    }
+
+    public void useWall(Wall w, boolean night) {
+        if (w == null) return;
+        if (night) wallNight = w.path; else wallDay = w.path;
+        for (Wall x : wallLib) x.used = false;
+        w.used = true;
+        save();
+    }
+
+    /* ==================== 自动化任务 ==================== */
+
+    public boolean addTask(Task t) {
+        if (t == null || tasks.size() >= TASK_MAX) return false;
+        tasks.add(t);
+        save();
+        return true;
+    }
+
+    public void removeTask(Task t) { tasks.remove(t); save(); }
+    public void updateTask() { save(); }
+
+    /* ==================== 每应用独立缩放 ==================== */
+
+    public int scaleOf(String pkg) {
+        Integer v = appScale.get(pkg);
+        return v == null ? winDefaultScale : v;
+    }
+
+    public void setScale(String pkg, int pct) {
+        if (pkg == null) return;
+        appScale.put(pkg, pct);
+        save();
+    }
+
+    public void clearScale(String pkg) {
+        appScale.remove(pkg);
+        save();
+    }
+
+    /* ==================== 持久化 ==================== */
+
+    private SharedPreferences sp() { return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE); }
+
+    public void save() {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("v", 2);
+            /* 桌面 */
+            o.put("mode", mode.name());
+            o.put("labels", showLabels);
+            o.put("pinned", new JSONArray(pinned));
+            o.put("dock", new JSONArray(dock));
+            o.put("widgets", new JSONArray(widgets));
+            JSONArray fs = new JSONArray();
+            for (Folder f : folders) {
+                JSONObject fo = new JSONObject();
+                fo.put("name", f.name);
+                fo.put("keys", new JSONArray(f.keys));
+                fs.put(fo);
+            }
+            o.put("folders", fs);
+            /* 布局 */
+            o.put("layoutPreset", layoutPreset);
+            o.put("stripAlpha", widgetStripAlpha);
+            o.put("customLayout", customLayoutName);
+            /* Dock */
+            o.put("dockPos", dockPos.name());
+            o.put("dockCount", dockCount);
+            o.put("dockWidth", dockWidth);
+            o.put("dockGap", dockGap);
+            o.put("dockIcon", dockIconSize);
+            o.put("dockAlpha", dockAlpha);
+            o.put("dockAutoHide", dockAutoHide);
+            o.put("dockFixed", dockFixed);
+            o.put("dockClock", dockShowClock);
+            /* 快捷栏 */
+            JSONArray qa = new JSONArray();
+            for (QuickSlot q : quickbar) {
+                JSONObject qo = new JSONObject();
+                qo.put("k", q.key == null ? "" : q.key);
+                qo.put("l", q.label == null ? "" : q.label);
+                qa.put(qo);
+            }
+            o.put("quickbar", qa);
+            o.put("qbtn1", quickBtn1);
+            o.put("qbtn2", quickBtn2);
+            /* 菜园 */
+            o.put("garden", gardenEnabled);
+            o.put("gardenDim", gardenDim);
+            o.put("gardenStyle", gardenStyle.name());
+            /* 小白点 */
+            o.put("ball", ballEnabled);
+            o.put("ballX", ballX);
+            o.put("ballY", ballY);
+            o.put("ballSize", ballSize);
+            /* 外观 */
+            o.put("theme", themeId);
+            o.put("accent", customAccent);
+            o.put("dayNight", dayNight.name());
+            o.put("wallDay", wallDay);
+            o.put("wallNight", wallNight);
+            o.put("wallDim", wallDim);
+            o.put("fontScale", fontScale);
+            JSONArray wa = new JSONArray();
+            for (Wall w : wallLib) {
+                JSONObject wo = new JSONObject();
+                wo.put("n", w.name); wo.put("p", w.path); wo.put("u", w.used);
+                wa.put(wo);
+            }
+            o.put("wallLib", wa);
+            /* 屏幕 */
+            o.put("marginH", marginH);
+            o.put("marginV", marginV);
+            o.put("gap", gap);
+            o.put("orientation", orientation.name());
+            o.put("keepOn", keepScreenOn);
+            o.put("hideBars", hideSystemBars);
+            o.put("infoBar", topInfoBar);
+            o.put("autoTime", autoNetworkTime);
+            /* 野菜岛 */
+            o.put("island", islandEnabled);
+            o.put("islandY", islandOffsetY);
+            o.put("islandW", islandWidth);
+            o.put("islandLyric", islandLyric);
+            /* 天气 */
+            o.put("citySource", citySource.name());
+            o.put("city", weatherCity);
+            o.put("cityAt", weatherUpdatedAt);
+            /* 歌词 */
+            o.put("lyricSource", lyricSource.name());
+            o.put("lyricLines", lyricLines);
+            o.put("lyricSize", lyricSize);
+            o.put("lyricOffset", lyricOffsetMs);
+            o.put("lyricBar", lyricStatusBar);
+            o.put("lyricNoti", lyricNotification);
+            o.put("lyricBt", lyricBluetooth);
+            o.put("mediaLines", mediaCardLines);
+            o.put("lyricHidden", new JSONArray(lyricHidden));
+            /* 窗口 */
+            o.put("perf", perf.name());
+            o.put("compat", compatMode);
+            o.put("bgKeep", bgKeep);
+            o.put("winScale", winDefaultScale);
+            o.put("winLock", winLockMap);
+            o.put("relLock", releaseOnLock);
+            o.put("pauseOff", pauseOnScreenOff);
+            JSONArray sa = new JSONArray();
+            for (Map.Entry<String, Integer> e : appScale.entrySet()) {
+                JSONObject so = new JSONObject();
+                so.put("p", e.getKey()); so.put("s", e.getValue());
+                sa.put(so);
+            }
+            o.put("appScale", sa);
+            /* 触摸 */
+            o.put("touchTh", touchThreshold);
+            o.put("longPress", longPressMs);
+            o.put("useA11y", useAccessibility);
+            o.put("useRoot", useRootInput);
+            /* 任务 */
+            JSONArray ta = new JSONArray();
+            for (Task t : tasks) {
+                JSONObject to = new JSONObject();
+                to.put("n", t.name);
+                to.put("tr", t.trigger.name());
+                to.put("ac", t.action.name());
+                to.put("p", t.pkg);
+                to.put("d", t.delayMs);
+                to.put("e", t.enabled);
+                ta.put(to);
+            }
+            o.put("tasks", ta);
+            /* 系统 */
+            o.put("autoHome", autoHome);
+
+            sp().edit().putString(K_LAYOUT, o.toString()).commit();
+        } catch (Throwable t) {
+            Log.w(TAG, "保存布局失败", t);
+        }
+    }
+
+    public void load() {
+        String raw = sp().getString(K_LAYOUT, null);
+        if (raw == null) { defaults(); return; }
+        try {
+            JSONObject o = new JSONObject(raw);
+            mode = optEnum(o, "mode", Mode.class, mode);
+            showLabels = o.optBoolean("labels", true);
+            readInto(o.optJSONArray("pinned"), pinned);
+            readInto(o.optJSONArray("dock"), dock);
+            JSONArray ws = o.optJSONArray("widgets");
+            if (ws != null) for (int i = 0; i < ws.length(); i++) widgets.add(ws.optInt(i));
+            JSONArray fs = o.optJSONArray("folders");
+            if (fs != null) {
+                for (int i = 0; i < fs.length(); i++) {
+                    JSONObject fo = fs.optJSONObject(i);
+                    if (fo == null) continue;
+                    Folder f = new Folder(fo.optString("name", "文件夹"));
+                    readInto(fo.optJSONArray("keys"), f.keys);
+                    if (!f.keys.isEmpty()) folders.add(f);
+                }
+            }
+            if (widgets.isEmpty()) { widgets.add(0); widgets.add(1); widgets.add(2); widgets.add(3); }
+
+            layoutPreset = o.optInt("layoutPreset", 0);
+            widgetStripAlpha = o.optInt("stripAlpha", 100);
+            customLayoutName = o.optString("customLayout", "");
+
+            dockPos = optEnum(o, "dockPos", DockPos.class, dockPos);
+            dockCount = o.optInt("dockCount", 5);
+            dockWidth = o.optInt("dockWidth", 76);
+            dockGap = o.optInt("dockGap", 8);
+            dockIconSize = o.optInt("dockIcon", 44);
+            dockAlpha = o.optInt("dockAlpha", 100);
+            dockAutoHide = o.optBoolean("dockAutoHide", false);
+            dockFixed = o.optBoolean("dockFixed", false);
+            dockShowClock = o.optBoolean("dockClock", true);
+
+            JSONArray qa = o.optJSONArray("quickbar");
+            if (qa != null) {
+                for (int i = 0; i < qa.length(); i++) {
+                    JSONObject qo = qa.optJSONObject(i);
+                    if (qo == null) continue;
+                    quickbar.add(new QuickSlot(qo.optString("k", ""), qo.optString("l", "")));
+                }
+            }
+            quickBtn1 = o.optString("qbtn1", "");
+            quickBtn2 = o.optString("qbtn2", "");
+
+            gardenEnabled = o.optBoolean("garden", true);
+            gardenDim = o.optInt("gardenDim", 60);
+            gardenStyle = optEnum(o, "gardenStyle", GardenStyle.class, gardenStyle);
+
+            ballEnabled = o.optBoolean("ball", false);
+            ballX = o.optInt("ballX", 40);
+            ballY = o.optInt("ballY", -1);
+            ballSize = o.optInt("ballSize", 48);
+
+            themeId = o.optString("theme", "leaf_shadow");
+            customAccent = o.optString("accent", "");
+            dayNight = optEnum(o, "dayNight", DayNight.class, dayNight);
+            wallDay = o.optString("wallDay", "");
+            wallNight = o.optString("wallNight", "");
+            wallDim = o.optInt("wallDim", 0);
+            fontScale = o.optInt("fontScale", 100);
+            JSONArray wa = o.optJSONArray("wallLib");
+            if (wa != null) {
+                for (int i = 0; i < wa.length(); i++) {
+                    JSONObject wo = wa.optJSONObject(i);
+                    if (wo == null) continue;
+                    Wall w = new Wall(wo.optString("n", ""), wo.optString("p", ""));
+                    w.used = wo.optBoolean("u", false);
+                    wallLib.add(w);
+                }
+            }
+
+            marginH = o.optInt("marginH", 12);
+            marginV = o.optInt("marginV", 8);
+            gap = o.optInt("gap", 6);
+            orientation = optEnum(o, "orientation", Orientation.class, orientation);
+            keepScreenOn = o.optBoolean("keepOn", false);
+            hideSystemBars = o.optBoolean("hideBars", false);
+            topInfoBar = o.optBoolean("infoBar", true);
+            autoNetworkTime = o.optBoolean("autoTime", true);
+
+            islandEnabled = o.optBoolean("island", false);
+            islandOffsetY = o.optInt("islandY", 0);
+            islandWidth = o.optInt("islandW", 320);
+            islandLyric = o.optBoolean("islandLyric", false);
+
+            citySource = optEnum(o, "citySource", CitySource.class, citySource);
+            weatherCity = o.optString("city", "");
+            weatherUpdatedAt = o.optLong("cityAt", 0L);
+
+            lyricSource = optEnum(o, "lyricSource", LyricSource.class, lyricSource);
+            lyricLines = o.optInt("lyricLines", 0);
+            lyricSize = o.optInt("lyricSize", 100);
+            lyricOffsetMs = o.optInt("lyricOffset", 0);
+            lyricStatusBar = o.optBoolean("lyricBar", false);
+            lyricNotification = o.optBoolean("lyricNoti", false);
+            lyricBluetooth = o.optBoolean("lyricBt", true);
+            mediaCardLines = o.optInt("mediaLines", 3);
+            readInto(o.optJSONArray("lyricHidden"), lyricHidden);
+
+            perf = optEnum(o, "perf", Perf.class, perf);
+            compatMode = o.optBoolean("compat", false);
+            bgKeep = o.optInt("bgKeep", 1);
+            winDefaultScale = o.optInt("winScale", 100);
+            winLockMap = o.optBoolean("winLock", true);
+            releaseOnLock = o.optBoolean("relLock", false);
+            pauseOnScreenOff = o.optBoolean("pauseOff", false);
+            JSONArray sa = o.optJSONArray("appScale");
+            if (sa != null) {
+                for (int i = 0; i < sa.length(); i++) {
+                    JSONObject so = sa.optJSONObject(i);
+                    if (so == null) continue;
+                    appScale.put(so.optString("p", ""), so.optInt("s", 100));
+                }
+            }
+
+            touchThreshold = o.optInt("touchTh", 10);
+            longPressMs = o.optInt("longPress", 500);
+            useAccessibility = o.optBoolean("useA11y", true);
+            useRootInput = o.optBoolean("useRoot", true);
+
+            JSONArray ta = o.optJSONArray("tasks");
+            if (ta != null) {
+                for (int i = 0; i < ta.length(); i++) {
+                    JSONObject to = ta.optJSONObject(i);
+                    if (to == null) continue;
+                    Task t = new Task(to.optString("n", "任务"));
+                    t.trigger = optEnum(to, "tr", TaskTrigger.class, t.trigger);
+                    t.action = optEnum(to, "ac", TaskAction.class, t.action);
+                    t.pkg = to.optString("p", "");
+                    t.delayMs = to.optInt("d", 5000);
+                    t.enabled = to.optBoolean("e", true);
+                    tasks.add(t);
+                }
+            }
+
+            autoHome = o.optBoolean("autoHome", true);
+        } catch (Throwable t) {
+            Log.w(TAG, "读取布局失败，回落默认", t);
+            defaults();
+        }
+    }
+
+    private void defaults() {
+        widgets.clear();
+        widgets.add(0); widgets.add(1); widgets.add(2); widgets.add(3);  // 时钟/日期/电量/内存
+        mode = Mode.WIDGET_TOP;
+        layoutPreset = 0;
+        save();
+    }
+
+    private static void readInto(JSONArray arr, List<String> dst) {
+        if (arr == null) return;
+        for (int i = 0; i < arr.length(); i++) {
+            String v = arr.optString(i, null);
+            if (v != null && !v.isEmpty() && !dst.contains(v)) dst.add(v);
+        }
+    }
+
+    private static void readInto(JSONArray arr, Set<String> dst) {
+        if (arr == null) return;
+        for (int i = 0; i < arr.length(); i++) {
+            String v = arr.optString(i, null);
+            if (v != null && !v.isEmpty()) dst.add(v);
+        }
+    }
+
+    /** 安全读枚举：名字不认识就保留默认值（旧存档兼容）。 */
+    private static <E extends Enum<E>> E optEnum(JSONObject o, String key, Class<E> cls, E def) {
+        try {
+            String s = o.optString(key, null);
+            if (s == null || s.isEmpty()) return def;
+            return Enum.valueOf(cls, s);
+        } catch (Throwable t) {
+            return def;
+        }
+    }
+
+    /* ==================== 导入导出（本地文件备份，不涉账号） ==================== */
+
+    public String exportScheme() {
+        return sp().getString(K_LAYOUT, "{}");
+    }
+
+    public boolean importScheme(String json) {
+        try {
+            new JSONObject(json);   // 校验
+            sp().edit().putString(K_LAYOUT, json).commit();
+            reset();
+            load();
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** 清空内存状态（重新 load 前调用，避免叠加）。 */
+    private void reset() {
+        pinned.clear(); dock.clear(); widgets.clear(); folders.clear();
+        quickbar.clear(); wallLib.clear(); tasks.clear(); appScale.clear();
+        lyricHidden.clear();
+    }
+
+    /** 恢复出厂配置 —— 布局、Dock、外观、任务全部换回刚装好的样子。 */
+    public void factoryReset() {
+        reset();
+        defaults();
+        load();
+    }
+}

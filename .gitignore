@@ -1,0 +1,12 @@
+# 构建产物
+app/out/
+app/gen/
+app/sources.txt
+*.class
+*.dex
+*.apk
+
+# 临时文件
+*.tmp
+*.log
+.DS_Store

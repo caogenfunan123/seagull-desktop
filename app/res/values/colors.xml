@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ground">#ff0b100c</color>
+    <color name="panel">#ff131a15</color>
+    <color name="card">#ff1b241d</color>
+    <color name="leaf">#ff8cc26a</color>
+    <color name="leaf_dim">#ff5d8a45</color>
+    <color name="text">#ffe8efe9</color>
+    <color name="text_dim">#ff9aa79d</color>
+    <color name="bad">#ffe0705f</color>
+    <color name="warn">#ffe0b45f</color>
+</resources>

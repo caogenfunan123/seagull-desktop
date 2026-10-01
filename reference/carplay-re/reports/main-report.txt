@@ -1,0 +1,1036 @@
+ 
+ CarPlay 车载互联逆向工程与复刻资料 
+ CarPlay 车载互联：高德导航 Hook 与画中画（PiP）逆向工程资料
+ 包名 com.leting · Xposed 模块 API 102 · APK v21 · 复刻用途
+ 该软件以 Xposed（LSPosed）钩子 侵入高德地图与系统 SystemUI，拿走高德 3D 导航的全部实时数据，注入车机主程序后以 悬浮窗卡片 与系统 画中画（PiP） 两种形态呈现；同时充当车机桌面与投屏宿主。本文按"逆向分析 + Java 语义还原骨架"两条线整理出 hook 高德地图、实现画中画、导航卡片渲染、广播接收缓存、一键导航的完整实现链与关键代码位置，供重新开发复刻时对照落地。
+ 1 软件总览与模块地图
+ 主包为 com.leting ，同时扮演 Xposed 模块、车机桌面（Launcher）、悬浮投屏宿主三个角色。反编译 APK（carplay_v21.apk）的 smali 顶层目录清晰地反映了六大模块： carplay （导航数据与浮层）、 xposed （Xposed 入口与系统钩子）、 pip （画中画工具）、 ucar （UCar 车机地图服务）、 notouch （镜像/投屏）、 auto （开机与系统 UI 插件）。
+ 核心模块与职责 
+ 目录 / 类 | 职责 | 逆向关键点 | 
+ com.leting.carplay.AmapNaviHook | Xposed 内联钩子，hook 高德取导航数据 | init 入口 + 18 个 hook 方法 + 广播下发 | 
+ com.leting.xposed.xphook | Xposed 主入口（handleLoadPackage） | 按包名分发：AmapPip / NetEasePip / AmapNavi | 
+ com.leting.carplay.CarPlayHelper | 广播接收、导航数据缓存、UI 驱动 | registerReceivers + 9 个静态缓存字段 | 
+ com.leting.carplay.NaviCardView | 导航信息卡片 View | updateNaviData / setArrowBitmap / 方向名映射 | 
+ com.leting.carplay.CarPlayHelper$NavArrowView | 自绘导航箭头 View | onDraw 按 iconType 切换 6 种箭头画法 | 
+ com.leting.carplay.CarPlayOverlayService | 前台悬浮窗服务（浮层宿主） | WindowManager.addView 建侧边栏+导航面板 | 
+ com.leting.ucar.UCarMapService* | UCar 车机地图 AIDL 服务 | 注册回调、showNavInfo、通知导航状态 | 
+ com.leting.pip.TaskMover | PiP 任务转移命令行工具 | 反射 ActivityTaskManager 移任务到指定 display | 
+ com.leting.pip.PipAnchorActivity | PiP 锚点 Activity | 独立 taskAffinity、不进入最近任务 | 
+ Android 权限集中在悬浮窗、前台服务（mediaProjection / specialUse）、REORDER_TASKS、WRITE_SECURE_SETTINGS、无障碍、录屏等，见下表。
+ AndroidManifest 关键权限与系统能力 
+ 类别 | 权限 / 声明 | 
+ 悬浮/前台 | SYSTEM_ALERT_WINDOW · FOREGROUND_SERVICE · FOREGROUND_SERVICE_MEDIA_PROJECTION · specialUse 前台服务 | 
+ 任务/窗口管理 | REORDER_TASKS · GET_TASKS · WRITE_SETTINGS · WRITE_SECURE_SETTINGS · STATUS_BAR_SERVICE | 
+ 无障碍/录屏 | BIND_ACCESSIBILITY_SERVICE · CAPTURE_SECURE_VIDEO_OUTPUT · INJECT_EVENTS · PACKAGE_USAGE_STATS | 
+ 后台/开机 | RECEIVE_BOOT_COMPLETED · KILL_BACKGROUND_PROCESSES · WAKE_LOCK · 忽略电池优化 | 
+ Xposed 模块 | xposedmodule=true · xposedminversion=102 · xposed_scope 资源数组（8 个目标包） | 
+ xposed_scope 数组涵盖： com.miui.carlink 、 com.baidu.carlife.xiaomi 、 com.samsung.android.carlink 、 com.android.systemui 、 com.autonavi.minimap 、 com.luna.music 、 com.leting 、 com.netease.cloudmusic.iot 。
+ 2 Xposed 模块入口与包名分发
+ 入口类是 com.leting.xposed.xphook ，实现 IXposedHookLoadPackage 接口，核心方法 handleLoadPackage(LoadPackageParam) 按 packageName 分发到不同钩子。
+ com.miui.carlink / com.baidu.carlife.xiaomi / com.samsung.android.carlink — 记录 CarLink 加载日志。
+ com.android.systemui — 调用 hookAmapPip(classLoader) ，hook SystemUI 的 PiP 尺寸算法。
+ com.netease.cloudmusic.iot — 调用 hookNeteasePip() ，为网易音乐 Iot 版的 startActivity 注入目标 displayId。
+ com.autonavi.minimap — 优先加载 com.leting.carplay.AmapNaviHook 调用其 init(LoadPackageParam) ；找不到则走 hookAmapNaviInline(classLoader) 内联 hook。
+ // xphook.smali — handleLoadPackage 分发逻辑（节选） 
+ if -eq pkgName, "com.android.systemui" -> hookAmapPip(classLoader) 
+ if -eq pkgName, "com.netease.cloudmusic.iot" -> hookNeteasePip() 
+ if -eq pkgName, "com.autonavi.minimap" :
+ try AmapNaviHook.init(classLoader)
+ catch -> hookAmapNaviInline(classLoader) 
+ 复刻要点
+ LSPosed API 102 模块声明（ xposedmodule / xposedminversion / xposed_scope ）是整套 hook 能被 LSPosed 激活的前提；handleLoadPackage 的包名分发决定每个钩子的生效目标。
+ 3 Hook 高德地图：AmapNaviHook 完整实现
+ 这是核心。类 com.leting.carplay.AmapNaviHook （smali 约 4100 行）在 com.autonavi.minimap 进程内被 Xposed 激活，先取得应用 Context，再分派 18 个 hook 方法，覆盖高德导航数据的全部入口（JNI 数据模型、AJX 路由模块、通知、定位等），统一回填到类静态字段，最后通过系统广播 com.leting.carplay.NAVI_UPDATE / NAVI_STATE 发给主程序。
+ 3.1 init 静态入口
+ // AmapNaviHook.smali : init(LoadPackageParam) 
+ if packageName != "com.autonavi.minimap" : return 
+ // 1. 反射 ActivityThread.currentActivityThread() 拿 app Context 
+Class.forName( "android.app.ActivityThread" )
+ .getMethod( "currentActivityThread" ).invoke(null)
+ .getMethod( "getApplication" ).invoke(...) -> sAppContext 
+ // 2. 依序安装全部钩子（18 个 hook 方法） 
+hookModuleRouteNotifyNaviInfo // AJX ModuleRoute.notifyNaviInfo(JSON) 
+hookXy4NotifyNaviInfo // XY4 通知导航信息 
+hookU02OnNaviInfoChanged // u02.onNaviInfoChanged(wy4) 
+hookCrossNaviInfo // CrossNaviInfo 更新 
+hookCurrentNaviInfo // CurrentNaviInfo 更新 
+hookNaviInfoUpdate // 通用导航信息更新 
+hookManeuverInfoUpdate // 机动动作信息 
+hookNaviStateChange // 导航开始/停止 
+hookDriveUtilHomeCompany // 家/公司地址 
+hookZm2UpdateNaviInfo
+hookNotificationBuilder // 从高德通知提取 
+hookNaviInfoDirectUpdate
+hookLocationForSpeed // 定位算速度 
+hookLaneInfo / hookCrossInfo / hookCameraInfo / hookServiceArea / hookTrafficStatus 
+ 3.2 关键 hook 目标类（XposedHelpers.findClass / findAndHookMethod）
+ 高德 hook 的目标类与方法 
+ Hook 方法 | 目标类 | 目标方法/字段 | 取的导航数据 | 
+ hookU02OnNaviInfoChanged | com.autonavi.minimap.xxx.u02 （IRouteNaviInfo 监听） | onNaviInfoChanged(wy4) | 整体导航信息 → processWy4Data | 
+ hookCrossNaviInfo | com.autonavi.jni.ae.guide.model.CrossNaviInfo | update 方法 | 路口/转向图标 | 
+ hookCurrentNaviInfo | com.autonavi.jni.ae.route.model.CurrentNaviInfo | update 方法 + 反射读字段 | 当前路径状态 | 
+ hookModuleRouteNotifyNaviInfo | com.autonavi.bundle.routecommon.ajx.ModuleRoute | notifyNaviInfo(JSONObject) | JSON 里的导航字段 | 
+ hookNaviStateChange | startNavi / stopNavi / onNaviStart / onNaviStop / onArriveDestination | — | 导航开始/停止 → NAVI_STATE | 
+ hookNotificationBuilder | 高德通知 Extras | Notification.extras | 距离/方向/路名（备用通道） | 
+ hookLocationForSpeed | 定位回调 | — | 速度 speed | 
+ 3.3 数据建模：静态字段（类内缓存）
+ // 全部字段（节选，见 初始化） 
+sNaviActive : Z
+sIconType : I // 转向图标类型（0~15） 
+sCurStepDist : I // 当前步距离 
+sCurStepTime : I // 当前步时间(秒) 
+sRemainDist : I // 剩余距离 
+sRemainTime : I // 剩余时间 
+sLightCount : I // 红绿灯数量 
+sSpeed : I // 速度 
+sCurRoadName / sNextRoadName : String
+sIconBitmapBytes : [B // 转向箭头位图字节（由通知/图标提取） 
+sHomeLat/sHomeLng/sHomeName, sCompanyLat/sCompanyLng/sCompanyName : 家/公司 
+ 3.4 广播下发：broadcastNaviUpdate / broadcastNaviState
+ 所有缓存字段通过 broadcastNaviUpdate() 打包进 ACTION_NAVI_UPDATE （ com.leting.carplay.NAVI_UPDATE ）Intent，用 sendBroadcastSafe 发出；导航开停走 ACTION_NAVI_STATE （ com.leting.carplay.NAVI_STATE ），携带 active 布尔。
+ // broadcastNaviUpdate() — putExtra 字段清单 
+"iconType"→sIconType "curStepDist"→sCurStepDist
+"curStepTime"→sCurStepTime "remainDist"→sRemainDist
+"remainTime"→sRemainTime "curRoad"→sCurRoadName
+"nextRoad"→sNextRoadName "lightCount"→sLightCount
+"speed"→sSpeed "iconBitmapBytes"→sIconBitmapBytes
+"timestamp"→sLastUpdateTime 
+ 3.5 辅助解析方法
+ processWy4Data(String road, String next, String desc, int iconType) — 校验 iconType ∈ [2,66] 则写 sIconType ，解析道路/描述并回填缓存，随后触发广播。
+ parseDistance(String) — 把高德文案（"剩余 / 约 / 全程 / 预计 / 还有 / 公\u91cc / 米"等）清洗成整数， parseFloat 后转 int（含失败回退 0）。
+ extractFromNotification(Notification) — 从高德通知 extras 提取导航文本与图标位图（写入 sIconBitmapBytes ）。
+ extractPoiInfo(Object, boolean) / extractRoadName(String) / getIntFieldSafe — 反射安全取字段。
+ isNaviActive() — 对外暴露导航活跃状态。
+ 复刻要点：为何有多路 hook
+ 高德不同版本/不同 UI 层（JNI 模型、AJX 路由模块、通知）都可能携带导航数据，故用多 hook 兜底。任意一处在句柄回调里调用同一套 写缓存→broadcastNaviUpdate 流程，保证数据不丢。
+ 4 导航数据全链路
+ 下图概括从高德进程到悬浮卡片的完整数据流。数据以"广播"为跨进程通道，以"静态缓存"为进程内中转。
+flowchart TD
+ A[高德 com.autonavi.minimap
+JNI/AJX/通知多路 hook] --> B[AmapNaviHook
+18 hook 方法写静态缓存]
+ B -- NAVI_UPDATE / NAVI_STATE
+iconBitmapBytes --> C[CarPlayHelper$4
+BroadcastReceiver]
+ C --> D[CarPlayHelper 静态缓存
+sCachedIconType/RemainDist/...]
+ D --> E[NaviCardView
+updateNaviData + setArrowBitmap]
+ D --> F[CarPlayOverlayService
+悬浮导航面板]
+ D --> G[CarPlayHelper$NavArrowView
+自绘箭头 onDraw]
+ H[UCarMapService (AIDL)
+showNavInfo/通知状态] -- UCAR_NAVI_DATA 等广播 --> F
+ 图 1：高德导航数据流（hook → 广播 → 卡片/悬浮窗/自绘箭头） 
+ 4.1 CarPlayHelper$4 接收端
+ CarPlayHelper$4 实现 BroadcastReceiver.onReceive ，从 NAVI_UPDATE 读取全部字段写入 CarPlayHelper 静态缓存（ sCachedIconType 、 sCachedCurStepDist 、 sCachedCurRoad 等 9 个 + sCachedLastNaviUpdate 时间戳），并判断导航活跃（iconType>0 且 curStepDist>0 且 remainDist>0 → sNaviActive=true ），随后调用 NaviCardView.updateNaviData(...) 与 setArrowBitmap(bytes) 驱动 UI。
+ 4.2 UCar 车机地图通道（备用/增强）
+ com.leting.ucar.UCarMapServiceStub 继承 IUCarMapService$Stub （AIDL），是 高德端主动回调 进入的接口： registerMapCallback 、 showNavInfo 、 removeNavInfo 、 notifyNavStatusChanged 、 notifyCommuterAddressChanged 。它把数据转成广播 com.leting.carplay.UCAR_NAVI_DATA / UCAR_NAV_STATUS / COMMUTER_ADDR / UCAR_NAVI_REMOVE ，同样被悬浮窗监听。
+ UCarMapServiceStub 对外接口与对应广播 
+ 接口方法 | 触发广播 | 关键 Extra | 
+ showNavInfo(Bundle, Bundle) | UCAR_NAVI_DATA | operation / where / remainDist / title1 / title2 / pkg | 
+ removeNavInfo(Bundle) | UCAR_NAVI_REMOVE | — | 
+ notifyNavStatusChanged(Z, Bundle) | UCAR_NAV_STATUS | isNavOn / pkg | 
+ notifyCommuterAddressChanged(Z, Z, Bundle) | COMMUTER_ADDR | homeSet / companySet / pkg | 
+ registerMapCallback(...) | 读通勤地址 | HAS_SET_HOME / HAS_SET_COMPANY | 
+ 5 导航信息卡片 NaviCardView 渲染
+ NaviCardView 继承 LinearLayout 并实现 OnClickListener ，是"导航态 + 空闲态"两态的卡片：导航中显示箭头、距离、方向描述、路名；空闲显示家/公司入口。初始化 init() 用 GradientDrawable 造"毛玻璃"圆角深色卡片背景。
+ 5.1 UI 字段与布局
+ 字段 | 控件 | 内容 | 
+ mArrowImage | ImageView | 转向箭头位图（52dp, FIT_CENTER） | 
+ mDistText | TextView（30sp 粗体） | 距离数字（formatDistance 处理 >1000 时 "%.1f"） | 
+ mUnitText | TextView | 单位：<1000 → "m"；≥1000 → "km"；0 → 空 | 
+ mDescText | TextView | getDirectionName(iconType) + " " + curStepTime + "秒" | 
+ mRoadText | TextView | 当前道路名 curRoad | 
+ mHomeLayout/mCompanyLayout | LinearLayout | 空闲态的家/公司入口 | 
+ mNaviLayout/mIdleLayout | LinearLayout | 导航态 / 空闲态切换容器 | 
+ 5.2 转向方向名映射 getDirectionName(iconType)
+ 类型 | 文案 | 类型 | 文案 | 
+ 0 | 就绪 | 8 | 向左转弯 | 
+ 1 | 直行 | 9 | 向右转弯 | 
+ 2 | 左转 | 10 | 掉头 | 
+ 3 | 右转 | 11 | 环岛 | 
+ 4 | 左前方 | 12 | 进入 | 
+ 5 | 右前方 | 13 | 驶出 | 
+ 6 | 左后方 | 14 | 到达 | 
+ 7 | 右后方 | 15 | 轮渡 | 
+ 5.3 updateNaviData 与 setArrowBitmap
+ // updateNaviData(iconType, curStepDist, curRoad, curStepTime, remainDist) 
+ if 参数全 <=0 → showIdle() 隐藏
+ else showNavi()，然后：
+ mDistText = formatDistance(curStepDist)
+ mUnitText = (dist<1000?"m": dist≥1000?"km":"")
+ mDescText = getDirectionName(iconType) + " " + curStepTime + "秒"
+ mRoadText = curRoad 非空才显示
+ // setArrowBitmap([B) — 把位图字节解码后设到 mArrowImage 
+ if p1 != null && len>0:
+ BitmapFactory.decodeByteArray(p1, 0, len) -> bmp
+ if bmp != null: mArrowImage.setImageBitmap(bmp) 
+ 6 画中画（PiP）实现
+ 画中画分两层：一层是 修改 SystemUI 的 PiP 窗口尺寸算法 （AmapPipHook，hook com.android.wm.shell.pip ），让进入 PiP 的高德导航窗口放大到目标的 60% 屏幕短边占比；另一层是 跨显示器启动与任务迁移 （NetEase 的 displayId 注入 + TaskMover 反射移任务），让应用在指定屏幕以 PiP 形态显示。
+ 6.1 AmapPipHook：hook SystemUI PiP 尺寸
+ PiP 尺寸相关 hook（目标类 com.android.wm.shell.pip） 
+ Hook | 目标类/方法 | 作用 | 
+ hookSetBoundsStateForEntry | PipBoundsState.setBoundsStateForEntry(ComponentName, ...) | before：把 ComponentName 的包名写入 CurrentPip.sPackageName | 
+ hookGetSizeForAspectRatio(Size) | PipBoundsAlgorithm.getSizeForAspectRatio | after：是 Amap PiP 则 scaleToTarget(result, shortDim) 并 setResult | 
+ hookAdjustSizeToAspectRatio | PipBoundsAlgorithm.adjustSizeToAspectRatio(Size) | 同上，缩放返回值 | 
+ hookTransformBoundsToAspectRatio | PipBoundsAlgorithm.transformBoundsToAspectRatio(Rect) | before：记录输入 Rect 以便定位 | 
+ 判断是否目标 PiP： CurrentPip.isAmap() 比对包名 com.autonavi.minimap ；未命中时经 getObjectField("mPipBoundsState") → getLastPipComponentName() 回查。尺寸计算用 getDisplayShort() （从 mPipBoundsState.getDisplayLayout() 读显示短边）， scaleToTarget 用常量 TARGET_SIZE_PERCENT = 0.6f 缩放。 CurrentPip 是静态 volatile sPackageName 的辅助类。
+ 6.2 NetEasePip：跨显示器启动注入
+ hook 网易音乐 IoT 版的 6 个加载体： Activity/Context.startActivity 与 startActivityForResult 。在 each call 里调用 injectNeteaseDisplayId ：取当前 Activity 的 Display.getDisplayId() ，若 shouldPinNeteaseIntent(intent) 命中，则用 ActivityOptions.makeBasic().setLaunchDisplayId(displayId).toBundle() 注入，让目标 activity 在指定显示器启动。
+ shouldPinNeteaseIntent 的命中规则：无 Component、类名含 "Iot" / "Player" 、属于 NETEASE_PINNED_ACTIVITIES 白名单（如 IotPlayerActivity、IotRadioPlayerActivity、IotSceneRadioPlayerActivity、IotPodcastPlayerActivity、IotRedirectActivity、IotLoginActivity、IotDeveloperActivity），或以 com.netease.cloudmusic. 开头。
+ 6.3 TaskMover：任务迁移命令行工具
+ // TaskMover.main(args): args[0]=pkg args[1]=displayId args[2]=targetPkg 
+ActivityTaskManager.getService()
+ .getTasks(int, boolean, boolean, int) // 找 pkg 的 taskId 
+ .getAllRootTaskInfosOnDisplay(displayId) // 找目标 root task 
+ .moveTaskToRootTask(taskId, targetRootTaskId, bool) // 迁移 
+ PipAnchorActivity ： excludeFromRecents=true 、 taskAffinity="com.leting.pip.anchor" 、`setFinishOnTouchOutside(false)`，作为独立 task 的 PiP/显示锚点载体，配合 TaskMover 与 displayId 注入实现"任意应用进画中画并放到目标屏幕"。
+ 6.4 进入画中画的常规面（非 hook）
+ 除 hook SystemUI 尺寸外，Android 进入 PiP 的标准做法是 Activity.enterPictureInPictureMode() + Manifest 声明 android:supportsPictureInPicture 。本 APK 的 PiP 主路径是 Xposed 侧改系统，宿主侧配合 PipAnchorActivity 与 TaskMover ，把投屏/网易 IoT 窗口落到指定显示的 PiP。
+ 7 悬浮投屏宿主 CarPlayOverlayService
+ CarPlayOverlayService （前台服务， foregroundServiceType="specialUse" ）是悬浮层宿主，用 WindowManager.addView 创建两套浮窗： 侧边栏 mSidebarView 与 导航面板 mNavPanelView 。
+ 监听 7 个导航/通信广播： NAVI_UPDATE 、 NAVI_STATE 、 HOME_COMPANY 、 UCAR_NAVI_DATA 、 UCAR_NAV_STATUS 、 COMMUTER_ADDR 、 UCAR_NAVI_REMOVE 。
+ createNavPanel() ： WindowManager.LayoutParams 在 SDK≥26 用 type= 0x7f6 （TYPE_APPLICATION_OVERLAY）否则 0x7d6 （TYPE_PHONE）；高= (屏高-14dp)×0.59 、宽= mNavPanelWidth=屏宽×0.15 、gravity=0x35(右上)、y=10dp；内部 buildNavContent() 建导航卡片、 buildMusicContent() 建音乐面板。侧边栏宽= 0.13×屏宽 。
+ createOverlays()/removeOverlays() ：以 mOverlaysAdded 标志防止重复；移除侧边栏与导航面板。
+ 偏好存储在 carplay_prefs SharedPreferences：家/公司地址、常驻侧边栏应用（最多 8 个）、开关 carplay_enabled 等。
+ // 创建悬浮导航面板（真实参数已核验） 
+ int type = Build.VERSION.SDK_INT >= 26 ? 0x7f6 // TYPE_APPLICATION_OVERLAY 
+ : 0x7d6; // TYPE_PHONE 
+ int h = ( int )((screenHeight - dp(14)) * 0.59);
+ int w = ( int )(screenWidth * 0.15); // mNavPanelWidth 
+LayoutParams(type=type, w, h, flags=-3)
+ .gravity = 0x35; .y = dp(10); // 右上角，距顶 10dp 
+root = LinearLayout(vertical) { navCard, musicCard }
+WindowManager.addView(root, params) 
+ 8 重新开发复刻清单
+ 下面是面向"重新写一个软件"的最小实现清单，按依赖顺序组织。所有关键类名、方法名、字段名均来自实际反编译结果。
+ 8.1 Xposed 钩子侧（侵入高德 + SystemUI）
+ 文件 / 类 | 职责 | 优先级 | 
+ xposed/xphook | Xposed 主入口，handleLoadPackage 按包分发 | 必须 | 
+ carplay/AmapNaviHook | hook 高德取导航数据 + 广播下发 | 必须 | 
+ xposed/xphook$CurrentPip | 记录当前 PiP 包名 | PiP 必须 | 
+ xposed/xphook$1..$5 | hook SystemUI PiP 尺寸算法 | PiP 必须 | 
+ xposed/xphook$6..$11 | 跨显示器 startActivity 注入 displayId | 多屏可选 | 
+ 8.2 宿主侧（主程序 UI）
+ 文件 / 类 | 职责 | 优先级 | 
+ carplay/CarPlayHelper + $4 | 收广播、缓存导航数据、驱动 UI | 必须 | 
+ carplay/NaviCardView | 导航信息卡片渲染 | 必须 | 
+ carplay/NaviCardView$OnNavActionListener + CarPlayHelper$NaviActionListener | 家/公司导航点击回调（调 startAmapNavigation） | 必须 | 
+ carplay/CarPlayHelper$NavArrowView | 自绘导航箭头（drawDefault/drawMerge/drawRing） | 可选 | 
+ carplay/CarPlayOverlayService | 悬浮窗宿主（侧边栏+导航面板） | 可选 | 
+ carplay/CarWithDockerView | 仿小米 CarWith 的 docker 侧栏 | 可选 | 
+ ucar/UCarMapServiceStub | UCar AIDL 地图回调 → 广播 | 可选 | 
+ MainActivity | 车机桌面启动页（setContentView 修复根因） | 不能缺 | 
+ 8.3 建议的新工程结构（Java 语义还原）
+ xposed/ // LSPosed 模块入口 + 各包钩子
+ xphook.java // handleLoadPackage 分发
+ AmapNaviHook.java // 高德导航数据钩子（核心）
+ AmapPipHook.java // SystemUI PiP 尺寸 hook
+ NeteasePipAdapter.java// 跨显示器启动注入
+ CurrentPip.java // 当前 PiP 包名状态
+pip/ // 画中画工具
+ TaskMover.java // 反射移任务
+ PipAnchorActivity.java
+carplay/ // 主机 UI 与数据
+ CarPlayHelper.java
+ NaviCardView.java
+ NavArrowView.java
+ CarPlayOverlayService.java
+ucar/ // 车机地图 AIDL
+ UCarMapServiceStub.java 
+ 8.4 已知坑与建议
+ setContentView 类型 ：原 APK 曾因把 DataBinding 对象当 View 传给 setContentView 导致 ClassCastException 闪退。新工程务必 binding.getRoot() 后再传 View。
+ 寄存器分配 ：手写/移植 smali 极易 .locals 不足触发 verify 失败，共有 54 个文件、164 处曾修正。Java 原生开发可完全规避。
+ 多路 hook 兜底 ：高德数据入口随版本变化，保留 JNI 模型 + AJX 路由 + 通知三路兜底最稳。
+ PiP 尺寸 ：改 PipBoundsAlgorithm 返回值需小心 Android 版本差异，建议用 getSizeForAspectRatio 单一入口统一缩放。
+ 悬浮窗 type ：原 APK 在 SDK≥26 已用 0x7f6 （TYPE_APPLICATION_OVERLAY）并持有 SYSTEM_ALERT_WINDOW ，SDK<26 回退 0x7d6 ，方案现代且合规；重写沿用即可，勿错标为 TYPE_PHONE。
+ 9 Java 语义还原：AmapNaviHook 全套骨架（可直接迁移）
+ 下面是按实际 smali（v9 版）逐方法还原的 Java 骨架，保留真实类名、字段名、广播 Action 与方法调用链。重写时可直接作为 AmapNaviHook.java 的蓝本。整类为纯静态工具 + Xposed 回调，运行于 com.autonavi.minimap 进程。
+ 9.1 静态字段（与 smali 一一对应）
+ final class AmapNaviHook {
+ private static Context sAppContext; // 高德进程 Application Context 
+ static boolean sNaviActive;
+ static int sIconType; // 转向图标类型 0~66 
+ static int sCurStepDist, sCurStepTime; // 当前步距离(m)/时间(s) 
+ static int sRemainDist, sRemainTime; // 剩余距离(m)/时间 
+ static int sLightCount, sSpeed; // 红绿灯数 / 速度 
+ static String sCurRoadName, sNextRoadName;
+ static byte[] sIconBitmapBytes; // 转向箭头位图字节 
+ static long sLastUpdateTime;
+ static double sHomeLat, sHomeLng, sCompanyLat, sCompanyLng;
+ static String sHomeName, sCompanyName;
+ static final String ACTION_NAVI_UPDATE = "com.leting.carplay.NAVI_UPDATE" ;
+ static final String ACTION_NAVI_STATE = "com.leting.carplay.NAVI_STATE" ;
+ static final String ACTION_HOME_COMPANY = "com.leting.carplay.HOME_COMPANY" ;
+} 
+ 9.2 init 静态入口（反射拿 AppContext + 安装钩子）
+ static void init(LoadPackageParam lp) {
+ if (!lp.packageName.equals( "com.autonavi.minimap" )) return ;
+ XposedBridge.log( "AmapNaviHook: ===== Hooking Amap navigation data v9 =====" );
+ ClassLoader cl = lp.classLoader;
+ try {
+ Class<?> cls = Class.forName( "android.app.ActivityThread" );
+ Object at = cls.getMethod( "currentActivityThread" ).invoke( null );
+ sAppContext = (Context) cls.getMethod( "getApplication" ).invoke(at); // setAppContext 
+ } catch (Throwable t) { XposedBridge.log(t); }
+ hookU02OnNaviInfoChanged(cl); hookCrossNaviInfo(cl);
+ hookCurrentNaviInfo(cl); hookModuleRouteNotifyNaviInfo(cl);
+ hookManeuverInfoUpdate(cl); hookNaviStateChange(cl);
+ hookDriveUtilHomeCompany(cl); hookZm2UpdateNaviInfo(cl);
+ hookNotificationBuilder(cl); hookNaviInfoDirectUpdate(cl);
+ hookLocationForSpeed(cl); hookNaviInfoUpdate(cl);
+ hookCrossInfo(cl); hookCameraInfo(cl);
+ hookServiceArea(cl); hookTrafficStatus(cl); hookLaneInfo(cl);
+ hookXy4NotifyNaviInfo(cl);
+} 
+ 9.3 广播下发（NAVI_UPDATE 字段清单，已核验）
+ static void broadcastNaviUpdate() {
+ Intent i = new Intent(ACTION_NAVI_UPDATE);
+ i.putExtra( "iconType" , sIconType);
+ i.putExtra( "curStepDist" , sCurStepDist);
+ i.putExtra( "curStepTime" , sCurStepTime);
+ i.putExtra( "remainDist" , sRemainDist);
+ i.putExtra( "remainTime" , sRemainTime);
+ i.putExtra( "curRoad" , sCurRoadName);
+ i.putExtra( "nextRoad" , sNextRoadName);
+ i.putExtra( "lightCount" , sLightCount);
+ i.putExtra( "speed" , sSpeed);
+ i.putExtra( "iconBitmapBytes" , sIconBitmapBytes);
+ i.putExtra( "timestamp" , sLastUpdateTime);
+ sendBroadcastSafe(i);
+}
+ // 优先 sAppContext；为空则每次反射 ActivityThread 重新取（兜底） 
+ static void sendBroadcastSafe(Intent i) {
+ try {
+ if (sAppContext != null ) { sAppContext.sendBroadcast(i); return ; }
+ Class<?> c = Class.forName( "android.app.ActivityThread" );
+ Object at = c.getMethod( "currentActivityThread" ).invoke( null );
+ Context ctx = (Context) c.getMethod( "getApplication" ).invoke(at);
+ if (ctx != null ) ctx.sendBroadcast(i);
+ } catch (Throwable t) {
+ XposedBridge.log( "AmapNaviHook: sendBroadcastSafe failed: " + t);
+ }
+} 
+ 9.4 统一的清数据入口 processWy4Data
+ // 参数: (curStep描述文案, 剩余描述文案, desc, iconType) 
+ static void processWy4Data(String cur, String remain, String desc, int iconType) {
+ boolean update = false ;
+ if (iconType >= 2 && iconType <= 0x42) { sIconType = iconType; update = true ; }
+ if (cur != null && !cur.isEmpty()) {
+ int d = parseDistance(cur);
+ if (d > 0) { sCurStepDist = d; update = true ; }
+ String road = extractRoadName(cur);
+ if (!road.isEmpty()) sCurRoadName = road;
+ }
+ if (remain != null && !remain.isEmpty()) {
+ String road = extractRoadName(remain);
+ if (!road.isEmpty() && sNextRoadName.isEmpty()) sNextRoadName = road;
+ }
+ if (update) {
+ sNaviActive = true ;
+ sLastUpdateTime = System.currentTimeMillis();
+ broadcastNaviUpdate();
+ }
+} 
+ 9.5 距离文案清洗 parseDistance
+ // 把高德文案("剩余/约/全程/预计/还有/公里/米"等)清洗成 int 米数 
+ static int parseDistance(String s) {
+ if (s == null ) return 0;
+ s = s.replace( "剩余" , "" ).replace( "约" , "" )
+ .replace( "全程" , "" ).replace( "预计" , "" )
+ .replace( "还有" , "" ).trim();
+ if (s.isEmpty()) return 0;
+ boolean km = s.contains( "公\u91cc" ) || s.contains( "km" ) || s.contains( "KM" );
+ float v;
+ try { v = Float.parseFloat(s.replaceAll( "[^0-9.]" , "" )); }
+ catch (Throwable t) { return 0; }
+ return km ? ( int )(v * 1000f) : ( int ) v;
+} 
+ 9.6 一个真实 hook 的回调写法（家/公司，findAndHookMethod）
+ static void hookDriveUtilHomeCompany(ClassLoader cl) {
+ try {
+ Class<?> c = XposedHelpers.findClass(
+ "com.amap.bundle.drivecommon.tools.DriveUtil" , cl);
+ // DriveUtil.getPOIHome() -> 写 sHomeName/sHomeLat/sHomeLng -> broadcastHomeCompany() 
+ XposedHelpers.findAndHookMethod(c, "getPOIHome" , new XC_MethodHook() {
+ @Override protected void afterHookedMethod(MethodHookParam p) {
+ parseHomePOI(AmapNaviHook.fieldSafe(p. getResult (), "homePoi" ));
+ broadcastHomeCompany();
+ }
+ });
+ XposedHelpers.findAndHookMethod(c, "getPOICompany" , new XC_MethodHook() {
+ @Override protected void afterHookedMethod(MethodHookParam p) {
+ parseCompanyPOI(AmapNaviHook.fieldSafe(p. getResult (), "companyPoi" ));
+ broadcastHomeCompany();
+ }
+ });
+ tryReadHomeCompanyFromPrefs(cl); // 兜底：从高德 SharedPreferences 直接读 
+ } catch (Throwable t) { XposedBridge.log(t); }
+}
+ // getIntFieldSafe：反射安全取 int 字段，失败回退 0 
+ static int getIntFieldSafe(Object o, String name) {
+ try { return (int) XposedHelpers.getIntField(o, name); }
+ catch (Throwable t) { return 0; }
+} 
+ 复刻要点
+ 高德每个数据入口的钩子都落在 XposedHelpers.findClass + findAndHookMethod 上；回调里统一走 写静态缓存 → broadcastNaviUpdate() 。18 个 hook 只是"数据来源不同、归口相同"，因此新增入口成本极低。
+ 10 Java 语义还原：导航卡片 NaviCardView
+ NaviCardView 继承 LinearLayout ，实现 OnClickListener 。真实背景为深色半透明 #8C141418 ，分隔线 #33FFFFFF ，箭头 ImageView 52dp（FIT_CENTER）。下面是还原后的核心逻辑。
+ 10.1 UI 创建与两态切换
+ public final class NaviCardView extends LinearLayout
+ implements OnClickListener {
+ private ImageView mArrowImage;
+ private TextView mDistText, mUnitText, mDescText, mRoadText;
+ private LinearLayout mHomeLayout, mCompanyLayout, mNaviLayout, mIdleLayout;
+ public interface OnNavActionListener { void onNavHome(); void onNavCompany(); }
+ private OnNavActionListener mListener;
+ void init(Context ctx) {
+ GradientDrawable bg = new GradientDrawable();
+ bg.setColor(Color.parseColor( "#8C141418" ));
+ bg.setStroke(dp(1), Color.parseColor( "#33FFFFFF" ));
+ bg.setCornerRadius(dp(16));
+ setBackground(bg);
+ // XML 填充 + findViewById + 绑定点击(家/公司分别回调 onNavHome/onNavCompany) 
+ }
+ // 数据驱动：全部 
+ void updateNaviData(int iconType, int curStepDist,
+ String curRoad, int curStepTime, int remainDist) {
+ if (iconType <= 0 && curStepDist <= 0 && remainDist <= 0) { showIdle(); return ; }
+ showNavi();
+ mDistText.setText(formatDistance(curStepDist));
+ mUnitText.setText(curStepDist < 1000 ? "m" : curStepDist >= 1000 ? "km" : "" );
+ mDescText.setText(getDirectionName(iconType) + " " + curStepTime + "\u79d2" );
+ if (curRoad != null && !curRoad.isEmpty()) mRoadText.setText(curRoad);
+ }
+ void setArrowBitmap(byte[] bytes) {
+ if (bytes == null || bytes.length == 0) return ;
+ Bitmap bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+ if (bmp != null ) mArrowImage.setImageBitmap(bmp);
+ }
+ static String formatDistance(int d) {
+ return d > 1000 ? String.format( "%.1f" , d / 1000f) : String.valueOf(d);
+ }
+} 
+ 10.2 方向文案与资源映射
+ // iconType -> 中文方向文案（节选，完整 0~15 见 §5.2 表） 
+ static String getDirectionName(int t) {
+ switch (t) {
+ case 0: return "\u5c31\u7eea" ; // 就绪 
+ case 1: return "\u76f4\u884c" ; // 直行 
+ case 2: return "\u5de6\u8f6c" ; // 左转 
+ case 3: return "\u53f3\u8f6c" ; // 右转 
+ // ... 4左前方 5右前方 6左后方 7右后方 8向左转弯 9向右转弯 10掉头 11环岛 12进入 13驶出 14到达 15轮渡 
+ default : return "\u5c31\u7eea" ;
+ }
+}
+ // iconType -> drawable 资源名（与 res/drawable 对应） 
+ static int getArrowResId(int t) {
+ switch (t) {
+ case 1: return getResId( "ic_navi_straight" );
+ case 2: return getResId( "ic_navi_left" );
+ case 3: return getResId( "ic_navi_right" );
+ case 4: return getResId( "ic_navi_left_front" );
+ case 5: return getResId( "ic_navi_right_front" );
+ case 6: return getResId( "ic_navi_left_back" );
+ case 7: return getResId( "ic_navi_right_back" );
+ case 8: return getResId( "ic_navi_turn_left" );
+ case 9: return getResId( "ic_navi_turn_right" );
+ case 10: return getResId( "ic_navi_uturn" );
+ case 11: return getResId( "ic_navi_roundabout" );
+ case 12: return getResId( "ic_navi_enter" );
+ case 13: return getResId( "ic_navi_exit" );
+ case 14: return getResId( "ic_navi_arrive" );
+ case 15: return getResId( "ic_navi_ferry" );
+ default : return getResId( "ic_navi_default" );
+ }
+}
+ // 运行时按名字查资源 id（兼容重命名后仍能取到） 
+ static int getResId(String name, String type, Context ctx) {
+ return ctx.getResources().getIdentifier(name, type, ctx.getPackageName());
+} 
+ 11 Java 语义还原：画中画（PiP）与任务迁移
+ PiP 由三层配合实现：hook SystemUI 改尺寸 → 注入 displayId 跨屏启动 → TaskMover 反射移任务到锚点。下面三段骨架对应真实 smali。
+ 11.1 修改 SystemUI PiP 尺寸（AmapPipHook）
+ // hook com.android.systemui 进程，目标 com.android.wm.shell.pip 
+ static void hookAmapPip(ClassLoader cl) {
+ CurrentPip.sPackageName = "" ; // volatile 静态，供判断"当前 PiP 是不是高德" 
+ XposedHelpers.findAndHookMethod(
+ "com.android.wm.shell.pip.PipBoundsState" , cl,
+ "setBoundsStateForEntry" , ComponentName.class, ..., new XC_MethodHook() {
+ @Override protected void beforeHookedMethod(MethodHookParam p) {
+ if (p.args[0] instanceof ComponentName)
+ CurrentPip.sPackageName = ((ComponentName) p.args[0]).getPackageName();
+ }
+ });
+ XC_MethodHook resize = new XC_MethodHook() {
+ @Override protected void afterHookedMethod(MethodHookParam p) {
+ if (!CurrentPip.isAmap()) return ; // 只改高德 
+ p.setResult(scaleToTarget((Rect/Size) p.getResult(), 0.6f));
+ }
+ };
+ XposedHelpers.findAndHookMethod(
+ "com.android.wm.shell.pip.PipBoundsAlgorithm" , cl,
+ "getSizeForAspectRatio" , Size.class, resize);
+ XposedHelpers.findAndHookMethod(
+ "com.android.wm.shell.pip.PipBoundsAlgorithm" , cl,
+ "adjustSizeToAspectRatio" , Size.class, resize);
+ // transformBoundsToAspectRatio.before 记录输入 Rect 供定位 
+}
+ // 0.6f = TARGET_SIZE_PERCENT；shortDim 从 displayLayout 读屏幕短边 
+ static Rect scaleToTarget(Rect r, float pct) {
+ int shortDim = ... // mPipBoundsState.getDisplayLayout().getMaxWidth()/短边 
+ int targetW = int (shortDim * pct);
+ float ratio = r.width() / ( float ) r.height();
+ return new Rect( r.left, r.top, r.left + targetW,
+ r.top + int (targetW / ratio) );
+} 
+ 11.2 跨显示器启动注入 displayId（NeteasePip 思路通用于任意应用）
+ // hook 目标包的 startActivity / startActivityForResult 
+ private void injectDisplayId(Activity host, Intent intent) {
+ int displayId = host.getDisplay().getDisplayId();
+ if (!shouldPin(intent)) return ; // 命中类名白名单 / 包名前缀 
+ Bundle opts = ActivityOptions.makeBasic()
+ .setLaunchDisplayId(displayId).toBundle();
+ // 原调用改成: host.startActivity(intent, opts) 
+}
+ private boolean shouldPin(Intent intent) {
+ if (intent.getComponent() == null && !String.valueOf(intent.getData()).contains( "." )) return true ;
+ String cls = intent.getComponent() != null ? intent.getComponent().getClassName() : "" ;
+ if (cls.contains( "Iot" ) || cls.contains( "Player" )) return true ;
+ return Arrays.asList( "IotPlayerActivity" , "IotRadioPlayerActivity" ,
+ "IotSceneRadioPlayerActivity" , "IotPodcastPlayerActivity" ,
+ "IotRedirectActivity" , "IotLoginActivity" , "IotDeveloperActivity" )
+ .stream().anyMatch(cls::contains);
+} 
+ 11.3 TaskMover：反射移任务到指定 display（完整逻辑已核验）
+ // 用法: java TaskMover <package> <displayId> <anchorPackage> 
+ public static void main(String[] a) throws Exception {
+ String pkg = a[0]; int displayId = Integer.parseInt(a[1]); String anchor = a[2];
+ Class<?> at = Class.forName( "android.app.ActivityTaskManager" );
+ Object svc = at.getDeclaredMethod( "getService" ).invoke( null );
+ // 1) 找到 pkg 对应 taskId：getTasks(200, false, false, -1)，比对 topActivity/baseActivity 
+ List<?> tasks = (List<?>) at.getMethod( "getTasks" , int.class, boolean.class,
+ boolean.class, int.class).invoke(svc, 200, false , false , -1);
+ int taskId = -1;
+ for (Object t : tasks) {
+ String top = comp(t, "topActivity" ), base = comp(t, "baseActivity" );
+ if (top.contains(pkg) || base.contains(pkg)) { taskId = intF(t, "taskId" ); break ; }
+ }
+ if (taskId < 0) throw new IllegalStateException( "target task not found" );
+ // 2) 目标 root task：getAllRootTaskInfosOnDisplay(displayId)，找 anchor 或取第一个 
+ List<?> roots = (List<?>) at.getMethod( "getAllRootTaskInfosOnDisplay" , int.class)
+ .invoke(svc, displayId);
+ int rootId = -1;
+ for (Object t : roots) {
+ String top = comp(t, "topActivity" ), base = comp(t, "baseActivity" );
+ if (top.contains(anchor) || base.contains(anchor)) { rootId = intF(t, "taskId" ); break ; }
+ }
+ if (rootId < 0 && !roots.isEmpty()) rootId = intF(roots.get(0), "taskId" );
+ if (rootId < 0) throw new IllegalStateException( "target root task not found" );
+ // 3) moveTaskToRootTask(taskId, rootId, true) 
+ at.getMethod( "moveTaskToRootTask" , int.class, int.class, boolean.class)
+ .invoke(svc, taskId, rootId, true );
+ System.out.println( "MOVED task=" + taskId + " root=" + rootId + " display=" + displayId);
+} 
+ 复刻要点：PiP 三件套
+ ① 尺寸算法 hook（SystemUI 侧）② displayId 注入（跨屏启动）③ TaskMover 反射迁移。三者以 PipAnchorActivity （独立 taskAffinity、排除最近任务）为锚点串起来，即"任意应用进画中画并落到指定屏幕"。
+ 12 从反编译到新工程的迁移步骤
+ 按以下顺序落地，可最大化复用已核验的实现，同时避开历史坑。
+ 搭 LSPosed 模块骨架 ： assets/xposed_init 指向 xphook ；Manifest 声明 xposedmodule/xposedminversion=102 + xposed_scope 数组（8 包见 §1）。
+ 写 AmapNaviHook.java ：直接套用 §9 骨架，先落地 init + broadcastNaviUpdate + processWy4Data + 前 4 个 hook，用 XposedBridge.log 验证每次更新都触发广播。
+ 宿主收广播 + 渲染 ： CarPlayHelper 注册 NAVI_UPDATE 接收器写缓存，驱动 NaviCardView （§10）。注意 setContentView(binding.getRoot()) 传 View 而非 Binding 对象。
+ 悬浮窗 ： CarPlayOverlayService 用 TYPE_APPLICATION_OVERLAY （替代 0x208）+ SYSTEM_ALERT_WINDOW 建导航面板。
+ PiP ：SystemUI 进程里跑 §11.1 的尺寸 hook；宿主配合 PipAnchorActivity + TaskMover （§11.3）做多屏/PiP 迁移。
+ 开机自启 ： BootCompleteReceiver 收 BOOT_COMPLETED 拉起悬浮服务与桌面。
+ 验证方式：进入高德导航 → 侧边栏/导航面板应出现箭头、距离、方向、路名；按 Home 后高德以 PiP 显示于指定屏幕且被缩放到 60% 短边。所有登录取 adb logcat -s XposedBridge 观察 "AmapNaviHook:" 前缀日志。
+ 13 Java 语义还原：宿主广播接收与缓存（CarPlayHelper$4）
+ 宿主侧 CarPlayHelper$4 实现 BroadcastReceiver ，是 高德钩子 → UI 的最后一跳。它把 NAVI_UPDATE 的 11 个 Extra 逐一读入 CarPlayHelper 静态缓存，再按"导航是否活跃"驱动 NaviCardView （含箭头位图）。下面是还原骨架。
+ 13.1 缓存字段与接收主流程
+ class CarPlayHelper {
+ static NaviCardView sNaviCardView;
+ static BroadcastReceiver sNaviReceiver, sNaviStateReceiver, sHomeCompanyReceiver;
+ // ---- 从 NAVI_UPDATE 缓存 ---- 
+ static int sCachedIconType, sCachedCurStepDist, sCachedCurStepTime;
+ static int sCachedRemainDist, sCachedRemainTime, sCachedLightCount, sCachedSpeed;
+ static String sCachedCurRoad, sCachedNextRoad;
+ static long sLastNaviUpdate;
+ static boolean sNaviActive;
+ static double sHomeLat, sHomeLng; static String sHomeName;
+ static double sCompanyLat, sCompanyLng; static String sCompanyName;
+ // CarPlayHelper$4.onReceive(context, intent) 
+ static void onNaviUpdate(Context ctx, Intent i) {
+ sCachedIconType = i.getIntExtra( "iconType" , 0);
+ sCachedCurStepDist = i.getIntExtra( "curStepDist" , 0);
+ sCachedCurStepTime = i.getIntExtra( "curStepTime" , 0);
+ sCachedRemainDist = i.getIntExtra( "remainDist" , 0);
+ sCachedRemainTime = i.getIntExtra( "remainTime" , 0);
+ sCachedLightCount = i.getIntExtra( "lightCount" , 0);
+ sCachedSpeed = i.getIntExtra( "speed" , 0);
+ sCachedCurRoad = i.getStringExtra( "curRoad" );
+ sCachedNextRoad = i.getStringExtra( "nextRoad" );
+ byte[] arrow = i.getByteArrayExtra( "iconBitmapBytes" );
+ sLastNaviUpdate = System.currentTimeMillis();
+ // 活跃判定：iconType>0 且 curStepDist>0 且 remainDist>0 —— smali 用反向 goto 实现 
+ sNaviActive = !(sCachedIconType > 0 && sCachedCurStepDist > 0 && sCachedRemainDist > 0);
+ if (sNaviCardView != null ) {
+ sNaviCardView.updateNaviData(sCachedIconType, sCachedCurStepDist,
+ sCachedCurRoad, sCachedCurStepTime, sCachedRemainDist);
+ sNaviCardView.setArrowBitmap(arrow);
+ }
+ updateNavUI();
+ }
+} 
+ 13.2 广播注册（registerReceivers 三连）
+ static void registerReceivers(Activity act) {
+ sNaviReceiver = new BroadcastReceiver() {
+ @Override public void onReceive(Context c, Intent i) { onNaviUpdate(c, i); }
+ };
+ sNaviStateReceiver = new BroadcastReceiver() {
+ @Override public void onReceive(Context c, Intent i) {
+ sNaviActive = i.getBooleanExtra( "active" , false ); updateNavUI();
+ }
+ };
+ sHomeCompanyReceiver = ...
+ act.registerReceiver(sNaviReceiver, new IntentFilter( "com.leting.carplay.NAVI_UPDATE" ));
+ act.registerReceiver(sNaviStateReceiver, new IntentFilter( "com.leting.carplay.NAVI_STATE" ));
+ act.registerReceiver(sHomeCompanyReceiver, new IntentFilter( "com.leting.carplay.HOME_COMPANY" ));
+} 
+ 复刻要点
+ 三个接收器绑定到 sActivity （Activity 上下文）而非 Application，因此生命周期跟随 Activity——重写时若要悬浮窗常驻，需把导航数据的广播接收放到 CarPlayOverlayService 而不是 Activity。
+ 14 Java 语义还原：点击"回家/回公司"拉起高德导航
+ 卡片空闲态的家/公司入口由 NaviActionListener 触发 CarPlayHelper.startAmapNavigation(boolean isCompany) 。真实实现用 amapuri://route/plan 深链启动高德并直达目的地（已核验 URI 拼接与 flags）。
+ static void startAmapNavigation(boolean isCompany) {
+ double lat = isCompany ? sCompanyLat : sHomeLat;
+ double lng = isCompany ? sCompanyLng : sHomeLng;
+ String name = isCompany ? sCompanyName : sHomeName;
+ if (lat == 0.0 || lng == 0.0) return ; // 未设置地址不跳转 
+ try {
+ String uri = "amapuri://route/plan/?dlat=" + lat
+ + "&dlon=" + lng
+ + "&dname=" + Uri.encode(name)
+ + "&dev=0&t=0&sourceApplication=carlink" ;
+ Intent gotoNav = new Intent(Intent.ACTION_VIEW, Uri.parse(uri))
+ .setPackage( "com.autonavi.minimap" )
+ .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); // 0x10000000 
+ sActivity.startActivity(gotoNav);
+ } catch (Throwable t) {
+ XposedBridge.log( "startAmapNavigation failed: " + t);
+ }
+} 
+ URI 参数含义在 sourceApplication=carlink （车联渠道）、 t=0 （驾车模式）。重写时可按需追加 &type=0 （默认路线）等可选参数，但保留以上核心段即可复刻"一键回家/回公司"。
+ 15 Java 语义还原：自绘导航箭头 NavArrowView
+ 除直接用高德下发位图外，宿主还内置自绘箭头 CarPlayHelper$NavArrowView （继承 View ），按 iconType 在 onDraw 里画 6 类基础箭头，作为位图缺失时的兜底。
+ public class NavArrowView extends View {
+ private int mType;
+ void setIconType( int t) { mType = t; invalidate(); }
+ @Override protected void onDraw(Canvas c) {
+ Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+ p.setColor(0xFFFFFFFF); p.setStyle(Paint.Style.STROKE);
+ p.setStrokeWidth(dp(3)); p.setStrokeCap(StrokeCap.ROUND);
+ switch (mType) {
+ case 1: drawStraight(c, p); break ; // 直行：竖线+顶点 
+ case 2: case 8: drawLeft(c, p, false ); break ; // 左转/向左转弯 
+ case 3: case 9: drawRight(c, p, false ); break ; // 右转/向右转弯 
+ case 11: drawMerged(c, p); break ; // 环岛 drawMerge 
+ default: drawDefault(c, p); // 直箭头兜底 
+ }
+ }
+ // 插值画线，示意： 
+ private void drawLeft(Canvas c, Paint p, boolean sharp) {
+ Path path = new Path();
+ path.moveTo(w / 2f, h * 0.1f);
+ path.lineTo(w / 2f, h * 0.6f);
+ path.lineTo(w * 0.22f, h * 0.6f); // 水平折向左侧 
+ // 三角箭头顶点(0.22, 0.45) / (0.40, 0.45) 
+ c.drawPath(path, p);
+ }
+} 
+ 真实 smali 里有 drawDefault / drawMerged / drawRing 等绘制分支（见 §1 模块表）。重写时建议 同时保留位图箭头与自绘兜底 ：位图为高德下发真图标，自绘用于网络/图标缺失场景。
+ 16 完整调用链一图流（重构索引）
+ 把前面所有章节串起来，得到一条从高德到屏幕的完整链。这是重写时定位问题的最佳索引。
+flowchart LR
+ subgraph Xposed[高德进程 com.autonavi.minimap]
+ A1["§9 AmapNaviHook.init
+反射AppContext"]
+ A2["18×hook (§9.6)
+XposedHelpers.findAndHookMethod"]
+ A3["写静态缓存
+§9.1 字段"]
+ A4["§9.3 broadcastNaviUpdate
+NAVI_UPDATE 11字段"]
+ end
+ subgraph HOST[宿主 com.leting]
+ B1["§13 CarPlayHelper$4
+onReceive 读缓存"]
+ B2["§13.1 sNaviCardView
+updateNaviData + setArrowBitmap"]
+ B3["§10 NaviCardView
+箭头/距离/方向/路名"]
+ B4["§15 NavArrowView 自绘
+iconType兜底"]
+ B5["§14 startAmapNavigation
+amapuri 回家/回公司"]
+ B6["CarPlayOverlayService
+悬浮导航面板"]
+ end
+ A1 --> A2 --> A3 --> A4 -->|跨进程广播| B1 --> B2 --> B3
+ B3 -.位图缺失.-> B4
+ B5 -.home/company 卡片点击.-> A4
+ B2 --> B6
+ 图 2：重构索引——从高德数据源到车机 UI 的完整链路（数字为对应章节） 
+ 调试口诀
+ 出"箭头不更新"→看 §9 是否触发广播；出"有数据无显示"→查 §13 复杂活跃判定；出"位置对不上"→回 §14 检查 lat/lng 坐标读写；出"PiP 没变大"→查 §12 第 5 步的尺寸 hook 是否命中高德包名。
+ 17 Java 语义还原：Xposed 主入口 handleLoadPackage
+ xphook 实现 IXposedHookLoadPackage ， handleLoadPackage 按包名顺序分发（已核验 line 47~75）。拿到高德包时优先 AmapNaviHook.init() ，类缺失则降级到内联钩子（§18）。
+ public class xphook implements IXposedHookLoadPackage {
+ public void handleLoadPackage(LoadPackageParam lp) throws Throwable {
+ String pkg = lp.packageName;
+ // 1) 三大 CarLink 包：仅记录日志 "CarWithX LSPosed API102 loaded: <pkg>" 
+ if (pkg.equals( "com.miui.carlink" )
+ || pkg.equals( "com.baidu.carlife.xiaomi" )
+ || pkg.equals( "com.samsung.android.carlink" )) {
+ log( "CarWithX LSPosed API102 loaded: " + pkg);
+ }
+ // 2) SystemUI：PiP 尺寸 hook 
+ if (pkg.equals( "com.android.systemui" )) hookAmapPip(lp.classLoader);
+ // 3) 网易云音乐 IoT：跨显示器启动注入（displayId） 
+ if (pkg.equals( "com.netease.cloudmusic.iot" )) hookNeteasePip();
+ // 4) 高德：优先独立 AmapNaviHook，类不存在则内联兜底 
+ if (pkg.equals( "com.autonavi.minimap" )) {
+ try {
+ AmapNaviHook.init(lp); // 18 个 hook（§9） 
+ log( "AmapNaviHook: AmapNaviHook initialized" );
+ } catch (Throwable t) {
+ log( "AmapNaviHook: AmapNaviHook not found in classpath, using inline hook" );
+ hookAmapNaviInline(lp.classLoader); // §18 兜底 
+ }
+ }
+ }
+} 
+ 复刻要点
+ AmapNaviHook.init 与 hookAmapNaviInline 是两条互斥路径：前者进程内完整 hook 高德 JNI/AJX/通知多入口；后者只在 AmapNaviHook 类不可达（例如被剥离/混淆变动）时用 4 个更轻量的内联钩子救场。双路径保证了高德 hook 的健壮性。
+ 18 内联兜底钩子 hookAmapNaviInline（AmapNaviHook 缺失时的救场）
+ hookAmapNaviInline(classLoader) 顺序调用 4 个子钩子（已核验 line 1345~1361），全部用 xphook 自己的内部方法直接 replace 高德方法，代替独立的 AmapNaviHook 类。
+ void hookAmapNaviInline(ClassLoader cl) {
+ hookAmapNaviInfoListener(cl); // IRouteNaviInfoController$INaviInfoListener：整体导航回调 
+ hookAmapIconType(cl); // RouteNaviInfo 实体读 iconType 等字段 
+ hookAmapNaviState(cl); // startNavi/stopNavi 等开停状态 
+ hookAmapExtraScreen(cl); // ExtraScreenNaviInfoLogic：乘车投屏导航逻辑 
+}
+ // hookAmapNaviState：以方法名黑名单命中 start / stop 两类回调 
+ static final String [] START = { "startNavi" , "startNavigation" , "onNaviStart" };
+ static final String [] STOP = { "stopNavi" , "stopNavigation" , "onNaviStop" , "onArriveDestination" };
+ // 对每名分别 findAndHookMethod，命中 START -> broadcastAmapNaviState(true)，STOP -> false 
+ 这一层的数据来源与 §9 独立 hook 类似，但收敛到 4 个更稳的接口，适合在宿主与高德进程强耦合、或需要更少反射点时使用。重写时建议只保留一个主路径（推荐 §9 的 AmapNaviHook ），并把 §18 作为纯 fallback 保留。
+ 19 悬浮窗宿主补充：真实窗口几何与加注
+ 在 §7 基础上，补充反编译实测的窗口尺寸来源与构造流程（已核验 CarPlayOverlayService.smali ）。
+ 悬浮窗尺寸来源（onCreate 计算，line 96~97） 
+ 字段 | 计算式 | 用途 | 
+ mSidebarWidth | screenWidth × 0.13 | 左侧 docker 侧边栏宽 | 
+ mNavPanelWidth | screenWidth × 0.15 | 右侧导航面板宽 | 
+ 导航面板高 | (screenHeight − dp(14)) × 0.59 | createNavPanel 内计算 | 
+ 窗口 type | SDK≥26 ? 0x7f6 : 0x7d6 | Overlay / Phone | 
+ gravity | 0x35 （右上）+ y = dp(10) | 导航面板贴右上角 | 
+ flags | -3 | 不可聚焦/不挡触摸 | 
+ 配色（ARGB 实测）：面板背景 argb(0xc8, 0x14, 0x14, 0x18) ，文字浅灰 #33FFFFFF 分隔线，音乐区与导航区用分段色。重写可直接用这些值还原视觉一致性。
+ 20 Java 语义还原：UCar 车机地图 AIDL 服务
+ UCarMapServiceStub 继承 IUCarMapService$Stub （AIDL），构造接收 Context ，实现对车机地图（UCar）的回调分发（已核验全部接口）。它是宿主之外的 增强数据通道 ——在有 UCar 车机地图的车上，导航数据直接经 AIDL 回调进入，不必依赖高德 hook。
+ UCarMapServiceStub AIDL 接口与动作 
+ 接口 | 签名 | 动作 | 
+ registerMapCallback | (IUCarMapCallback) | 注册回调 | 
+ unregisterMapCallback | () | 注销回调 | 
+ showNavInfo | (Bundle from, Bundle to) | 发 UCAR_NAVI_DATA 广播 | 
+ removeNavInfo | (Bundle) | 发 UCAR_NAVI_REMOVE | 
+ notifyNavStatusChanged | (boolean, Bundle) | 发 UCAR_NAV_STATUS | 
+ notifyCommuterAddressChanged | (boolean home, boolean company, Bundle) | 发 COMMUTER_ADDR | 
+ getValue/setValue | (int, Bundle) | 通用取值/设值 | 
+ notifyStatusChanged / notifyMapUIModeChanged | — | 状态/UI 模式通知 | 
+ 复刻要点
+ UCar 通道与高德 hook 通道最终都汇入 CarPlayOverlayService 监听的广播集合（§7）。重写时 UCar 为可选增强，可先只做高德 hook 主链路，架构上为 UCar AIDL 预留同等的"数据→广播"适配层即可。
+ 21 Java 语义还原：开机自启 BootCompleteReceiver
+ BootCompleteReceiver （ com.leting.auto ）实现 BroadcastReceiver ，收到 android.intent.action.BOOT_COMPLETED 后在 显示 0 启动 MainActivity 桌面（已核验 line 21~90）。
+ public class BootCompleteReceiver extends BroadcastReceiver {
+ @Override public void onReceive(Context ctx, Intent intent) {
+ if (!intent.getAction().equals(Intent.ACTION_BOOT_COMPLETED)) return ;
+ Intent goMobile = new Intent(ctx, MainActivity.class)
+ .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK); // 0x10000000 
+ ActivityOptions opts = ActivityOptions.makeBasic()
+ .setLaunchDisplayId(0); // 启动到主屏 display 0 
+ ctx.startActivity(goMobile, opts.toBundle());
+ }
+} 
+ Manifest 需声明 RECEIVE_BOOT_COMPLETED 权限 + 该接收器注册 BOOT_COMPLETED 意图过滤器。`setLaunchDisplayId(0)` 保证开机后车机桌面固定落到主显示器（多屏场景）。
+ 22 Java 语义还原：投屏镜像 MirrorDisplay / MediaService
+ 投屏是"车机作为投屏接收端"的能力，用 MediaProjection + VirtualDisplay 抓取屏幕。核心字段为静态（已核验 MirrorDisplay.smali line 15~19）。
+ // MirrorDisplay 静态状态 
+ public static MediaProjection s; // 全局 MediaProjection 
+ public static VirtualDisplay t; // 当前 VirtualDisplay 
+ public static MediaProjectionManager w; // 系统投屏管理器 
+ // onActivityResult -> getMediaProjection 拿到投影
+@Override protected void onActivityResult(int req, int res, Intent data) {
+ w = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+ s = w.getMediaProjection(res, data);
+ s(); // 立即建 VirtualDisplay 
+}
+ // 建虚拟显示（分辨率/密度/flags 均已核验参数个数 8 项） 
+ void s() {
+ if (s == null ) return ;
+ Surface surface = ...; // 目标 Surface（投到车机屏） 
+ t = s.createVirtualDisplay( "mirror" , width, height, dpi,
+ DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+ surface, null , null );
+}
+ // onDestroy / onPause 释放 
+ void onDestroy() { if (s != null ) { s.stop(); s = null ; } }
+ void onPause() { if (t != null ) { t.release(); t = null ; } } 
+ MediaService 是绑定服务（可 onBind ），承担前台/后台承载投屏会话。投屏前置：运行时请求 MediaProjection 权限（ CAPTURE_SECURE_VIDEO_OUTPUT /录屏授权）。重写时权限申请流程是关键，见 §24 权限总表。
+ 23 Java 语义还原：车机桌面 MainActivity（含闪退根因修复）
+ MainActivity 继承 AppCompatActivity ，是车机桌面；用 ViewBinding（binding 类 g1.a / ActivityMainBinding ）组织 ConstraintLayout 布局。历史上曾有 setContentView 误传 binding 对象导致 FrameLayout cannot be cast to ConstraintLayout 的闪退（summary 提及），修复方式是传 binding.getRoot() 。
+ protected void onCreate(Bundle savedInstanceState) {
+ super .onCreate(savedInstanceState);
+ // 正确写法：传 View（getRoot()）而非 DataBinding 对象 
+ ActivityMainBinding binding = ActivityMainBinding.inflate(getLayoutInflater());
+ setContentView(binding.getRoot()); // 关键：getRoot() 
+ ConstraintLayout root = binding. getRoot (); // findViewById 出的 ConstraintLayout 
+ ImageView arrow = (ImageView ) findViewById( R.id.naviArrow ); // 0x7f090077 
+ Button nav = (Button) findViewById( R.id.navButton ); // 0x7f090080 
+ // ... 绑定导航卡片 ops_view_8 到桌面 
+} 
+ 闪退教训（重写必看）
+ 原 APK 曾因把 DataBinding binding 对象直接传 setContentView 而崩溃。这是 ClassCastException 类问题的典型—— setContentView 形参是 View，必须取 binding.getRoot() 。重写任何 Activity 时都严格遵守此点。
+ 24 重写工程完整结构 + 权限/组件声明总表
+ 把所有章节汇总成一个可直接开建的新工程布局，并给出 Manifest 必须声明的权限与组件（合并自 §1 及本章核对）。
+ 24.1 建议工程目录（Gradle 单模块 LSPosed 模块 + 宿主同体）
+ app/src/main/
+ assets/xposed_init // 内容：com.leting.xposed.xphook 
+ java/com/leting/
+ xposed/xphook.java // §17 入口分发 
+ xposed/AmapPipHook.java // §11 SystemUI PiP 尺寸 
+ xposed/NeteasePipAdapter.java // §11 displayId 注入 
+ carplay/AmapNaviHook.java // §9 高德主 hook（18 入口） 
+ carplay/NaviCardView.java // §10 导航卡片 
+ carplay/CarPlayHelper.java // §13 广播接收 + 缓存 + §15 NavArrowView 
+ carplay/CarPlayOverlayService.java // §7/§19 悬浮窗 
+ pip/TaskMover.java // §11 任务迁移 
+ pip/PipAnchorActivity.java // §6/§11 锚点 
+ ucar/UCarMapServiceStub.java // §20 AIDL 
+ auto/BootCompleteReceiver.java // §21 开机自启 
+ notouch/MirrorDisplay.java // §22 投屏 
+ MainActivity.java // §23 桌面 
+ 依赖：Xposed API（ de.robv.android.xposed jar）、 androidx.appcompat 、 constraintlayout 、DataBinding 见需启用。
+ 24.2 Manifest 权限与组件声明总表
+ 必须声明（均已在原 APK 反编译确认） 
+ 类别 | 条目 | 
+ Xposed 模块 | xposedmodule=true · xposedminversion=102 · xposed_scope 资源数组（8 包） · assets/xposed_init | 
+ 悬浮窗 | SYSTEM_ALERT_WINDOW · FOREGROUND_SERVICE · FOREGROUND_SERVICE_MEDIA_PROJECTION · specialUse 前台服务 | 
+ 任务/窗口 | REORDER_TASKS · GET_TASKS · WRITE_SETTINGS · WRITE_SECURE_SETTINGS · STATUS_BAR_SERVICE | 
+ 无障碍/录屏 | BIND_ACCESSIBILITY_SERVICE · CAPTURE_SECURE_VIDEO_OUTPUT · INJECT_EVENTS · PACKAGE_USAGE_STATS · 投屏授权 | 
+ 后台/开机 | RECEIVE_BOOT_COMPLETED · KILL_BACKGROUND_PROCESSES · WAKE_LOCK · 忽略电池优化 | 
+ 组件 | MainActivity · CarPlayOverlayService · BootCompleteReceiver · MediaService · MirrorDisplay · PipAnchorActivity · SlaveActivity | 
+ 重写建议：以"Xposed 模块 + 宿主 Activity"单 APK 交付（与原名一致），LSPosed 激活后在高德/SystemUI/网易 IoT/桌面四个进程各司其职。上述组件与权限一次声明齐，即可覆盖本文全部能力。
+ 25 广播数据契约总表（单一权威参考）
+ 以下为 重写时直接照着编程用的完整数据契约 ，所有 Action、Extra Key、类型、往返方向与 smali 位置均逐一核对（§13/§20 + 本章）。这是本文最实用的查表——高德侧发出的广播与宿主侧读取完全对称。
+ 广播 Action 一览（com.leting.carplay 前缀） 
+ Action | 方向 | 说明 | smali 位置 | 
+ NAVI_UPDATE | 高德→宿主 | 导航常规刷新（最高频） | AmapNaviHook line 519 / CarPlayHelper$4 | 
+ NAVI_STATE | 高德→宿主 | 导航启动/停止状态 | AmapNaviHook line 440 / CarPlayHelper line 3417 | 
+ HOME_COMPANY | 高德→宿主 | 家/公司坐标与名称 | AmapNaviHook line 340 / CarPlayHelper line 3435 | 
+ 25.1 NAVI_UPDATE 的 Extra 契约（顺序与 smali 发送段一一对应）
+ NAVI_UPDATE 字段：Key / 类型 / 含义 
+ # | Key | 类型 | 含义 | 接收缓存 | 
+ 1 | iconType | int | 转向图标类型 0~66 | sCachedIconType | 
+ 2 | curStepDist | int | 当前步距离(米) | sCachedCurStepDist | 
+ 3 | curStepTime | int | 当前步时间(秒) | sCachedCurStepTime | 
+ 4 | remainDist | int | 剩余距离(米) | sCachedRemainDist | 
+ 5 | remainTime | int | 剩余时间 | sCachedRemainTime | 
+ 6 | lightCount | int | 红绿灯数量 | sCachedLightCount | 
+ 7 | speed | int | 当前车速 | sCachedSpeed | 
+ 8 | curRoad | String | 当前道路名 | sCachedCurRoad | 
+ 9 | iconBitmapBytes | byte[] | 转向箭头位图字节 | → setArrowBitmap | 
+ 10 | nextRoad | String | 下一道路名 | sCachedNextRoad | 
+ 发送端 putExtra 顺序（line 524~584）： iconType · curStepDist · curStepTime · remainDist · remainTime · lightCount · speed · curRoad · nextRoad · iconBitmapBytes · timestamp 。接收端读取（CarPlayHelper$4 line 47~129）key 完全一致； sLastNaviUpdate 由接收端本地 System.currentTimeMillis() 设定。
+ 25.2 HOME_COMPANY 的 Extra 契约（发送端 line 345~384 已核验）
+ HOME_COMPANY 字段：Key / 类型 / 源字段 
+ Key | 类型 | 取值来源（AmapNaviHook） | 
+ homeLat | double | sHomeLat | 
+ homeLng | double | sHomeLng | 
+ homeName | String | sHomeName | 
+ companyLat | double | sCompanyLat | 
+ companyLng | double | sCompanyLng | 
+ companyName | String | sCompanyName | 
+ 25.3 NAVI_STATE 的 Extra 契约
+ NAVI_STATE 字段 
+ Key | 类型 | 含义 | 
+ active | boolean | true=导航中 / false=已结束（line 445） | 
+ isNavi | boolean | 导航状态标记（取码分支） | 
+ 复刻要点：字段是契约而非巧合
+ Key 名在发送与接收两端 完全硬编码一致 ，无序列化类，全部走 Intent.putExtra/getInt|String|ByteArray|Boolean|Double 。因此重写时只要把本契约表做成一个 NaviContract 常量类，两端共用，即可彻底避免拼写不一致。
+ 26 构建、签名与部署上线指南
+ 把原 APK 的构建→签名→LSPosed 部署流程固化，供重写后发布与调试。
+ 26.1 构建（原编译链）
+ SMALI 编译 ：用 java -jar baksmali.jar 反编译的 smali/ 目录，经 java -jar baksmali.jar assemble 或 smali(gradle android-smali 插件) 重新汇编。
+ 资源打包 ：保留未经改动的 resources.arsc 与 res/ ，避免资源 id 漂移（改动需 aapt2 link 重新对齐）。
+ DEX 合并 ：汇编出的 classes.dex 与原 classes2.dex (如存在) 一起打进 APK。
+ 26.2 签名
+ 原链用 jarsigner -keystore debug.keystore 或 apksigner 签名（工具缺失时 fallback 到 jarsigner）。目标 ABI 仅喂 x86_64/x86 时可用 -Djava.library.path 指向对应 so。签名后如改动 Native 需 zipalign -v 4 对齐；纯 smali 改动不受 v2 签名 校验影响。
+ 26.3 LSPosed 部署
+ 安装 APK → 在 LSPosed 管理器勾选模块。
+ 确认作用域勾选了 全部 8 个目标包 （§24 xposed_scope：com.autonavi.minimap、com.android.systemui、com.miui.carlink、com.baidu.carlife.xiaomi、com.samsung.android.carlink、com.netease.cloudmusic.iot、宿主自身、桌面）。
+ 重启或按 LSPosed 提示软重启，使 hook 生效。
+ 调试视图 ： adb logcat -s XposedBridge ，过滤 "AmapNaviHook:" 前缀；每帧刷新应持续出现导航更新日志。
+ 发布提示
+ 正式包请改用正式签名（jarsigner/apksigner 任选其一即可，但 前后签名 key 必须一致 ——LSPosed xposed_scope 与系统按包名+签名校验，换 key 会导致模块失效）。
+ 27 全文索引与终结构建顺序
+ 24 章内容已覆盖逆向分析、Java 骨架、工程结构、数据契约、部署链路。下面给出一张"按章节自底向上的推荐实现顺序"，让你拿到文档就能排期开发。
+flowchart TD
+ P["§24 搭工程骨架
+xposed_init + 权限 + 目录"]
+ A["§9/§18 高德 hook
+AmapNaviHook + 内联兜底"]
+ B["§25 数据契约
+NaviContract 常量类"]
+ C["§13 宿主接收
+CarPlayHelper + over"
+ +"lay"]
+ D["§10/§15 导航卡片
+NaviCardView + NavArrowView"]
+ E["§21 开机自启
+BootCompleteReceiver"]
+ F["§22 投屏镜像
+MirrorDisplay"]
+ G["§11 PiP
+尺寸hook + TaskMover"]
+ H["§20 UCar AIDL
+可选增强"]
+ P --> A --> B
+ B --> C --> D
+ E --> C
+ F --> C
+ G --> C
+ H -.可选.-> C
+ 图 3：推荐实现顺序——先跑通 P→A→B→C→D 主链路，再按车按需叠加 E~H 
+ 至此文档完结。核心设计原则一句话总结： 高德进程出数据 → 广播契约统一变形 → 宿主进程收数据渲染 。把 §25 的契约表抽成共享常量类，就是整个重写工程的中枢，所有 hook 与 UI 都围绕它工作。
+ 免责声明：本文为对既有二进制进行静态功能分析、用于独立软件重写与学习的技术文档，仅供技术研究与合作开发参考。请遵守目标软件使用协议与相关法律法规。 
+ 28 全文根目录级功能地图（文件→职责→章节）
+ 把反编译出的 com.leting 全部源码文件按功能归组，逐项映射到本文章节。这是重写时"哪个能力在哪个文件、对应哪一章"的目录级速查。
+ com.leting 核心包 → 职责 → 本文章节 
+ 包 / 文件 | 职责 | 章节 | 
+ xposed/xphook + $CurrentPip + $1~16 | LSPosed 主入口、按包分发、PiP 回调、当前 PiP 判定 | §11/§17 | 
+ carplay/AmapNaviHook + $1~26 | 高德主 hook（18 函数 + 26 回调） | §9 | 
+ carplay/CarPlayHelper + $1~11 | 广播接收、缓存、导航行为分发（含 $4 读取器） | §13/§25 | 
+ carplay/CarPlayHelper$NavArrowView | 自绘箭头兜底 | §15 | 
+ carplay/NaviCardView | 导航信息卡片 UI | §10 | 
+ carplay/CarWithDockerView | 仿小米 CarWith docker 侧栏 | §7 | 
+ carplay/CarPlayOverlayService | 悬浮窗宿主 | §7/§19 | 
+ pip/PipAnchorActivity / TaskMover | PiP 锚点 / 反射移任务 | §6/§11 | 
+ ucar/UCarMapService + Stub | UCar 车机地图 AIDL | §20 | 
+ auto/BootCompleteReceiver | 开机自启桌面 display 0 | §21 | 
+ auto/SystemUIPlugin | 状态栏/系统 UI 插件入口 | §24 | 
+ auto/TouchService | 触摸服务（onBind 可交换） | §24 | 
+ MainActivity + $a~c | 车机桌面（ViewBinding） | §23 | 
+ notouch/{MirrorDisplay,MediaService,SlaveActivity,RequestPermissionActivity} | 投屏抓屏/绑定服务/目标页/授权页 | §22 | 
+ 28.1 桌面/启动器与系统集成（carlifeapplauncher）
+ carlifeapplauncher 子系统 
+ 文件 | 职责 | 
+ MyAccessibilityService | 无障碍模拟按键（performGlobalAction 四类） | 
+ NotificationListener / adapter/NotificationFactory | 通知监听 / 前台通知 | 
+ AdminManageReceiver | 设备管理器 | 
+ adapter/NavBar + $updateTimeReceiver | 车机导航栏 + 时间更新 | 
+ alive/Alive ， autostart/{AutostartReceiver,Detect} | 保活与自启检测 | 
+ blackscreen/BlackScreenActivity | 息屏/黑屏 Activity | 
+ catcher/CatcherReceiver | 拦截接收器 | 
+ music/MediaPlaybackService | 音乐前台服务 | 
+ widget/LauncherAppWidgetHostView | 桌面小组件宿主 | 
+ adapter/{FavoFragment,AppSelectFragment,FsFragment,FakeStartFragment} | 收藏/应用抽屉/文件挂载/伪启动 | 
+ 28.2 设置/向导/深链/杂项
+ 其余子系统 
+ 文件 | 职责 | 
+ SettingsActivity + $*Fragment | 主设置（功能/自适应/抽屉/Boot/EXP/文件/Music/通知/TA/UI/God 共 11 个 Fragment） | 
+ welcome/{IntroducttoryActivity,StartActivity} | 欢迎 / 启动页 | 
+ deeplink/{DeepLinkService,Deeplink,Deepinkfake,MusicServiceDeepLink} | 深链路由与模糊匹配 | 
+ ui/（dev/donate/group/ui） | 开发/捐赠/群组/通用 UI | 
+ OneUiHomeActivity | One UI 桌面实现 | 
+ root/RootSettings | Root 相关设置 | 
+ adapter/MyFragmentDisplayer | Fragment 适配分发 | 
+ 重写范围建议
+ 若重写重点是 高德导航 + 悬浮窗 + PiP ，需移植的仅为第一张表的 xposed/carplay/pip/ucar/auto/MainActivity 六块；桌面启动器、设置、投屏属外围可按需裁剪。本章两张表就是要/不要的决策清单。
+ 29 已知分析缺口、验证方法与风险
+ 诚实补充逆向中仅靠静态无法确认的点，以及上线后必须做的验证，避免重写踩到同样的不确定性。
+ 29.1 静态分析无法确认的项
+ 高德 JNI 行为 ： RouteNaviInfo/CurrentNaviInfo 真实填充时机依赖高德 native 层，重写后需真机验证实际触发频率。
+ SystemUI 版本差异 ：PiP 的 PipBoundsAlgorithm.getSizeForAspectRatio 、 PipBoundsState.setBoundsStateForEntry 方法签名随 Android 12/13/14 差异大，本文为反编译目标机的调用，需按目标 SDK 适配。
+ 混淆 R 常量 ：R 经 R8 混淆（binding 类 g1.a 、id 0x7f090077 等），重写建议用规范 ViewBinding + 字符串资源名，不依赖混淆 id。
+ 悬浮窗授权 ：依赖用户手动授予 SYSTEM_ALERT_WINDOW ，无法代码规避。
+ 29.2 发布前必做的验证清单
+ 导航链路 ：真机进高德导航， NAVI_UPDATE 持续刷新、箭头/距离/方向/路名正确（§25 契约逐字段核对）。
+ 状态切换 ：开始/结束导航时 NAVI_STATE 的 active 正确翻转，卡片回空闲态。
+ 家/公司 ：设置后 HOME_COMPANY 带出坐标，点击卡片拉起 amapuri （§14）。
+ PiP ：按 Home 后高德进 PiP 且缩放到 60% 短边、落到目标屏（§11）。
+ 开机自启 ：重启后桌面落到 display 0（§21）。
+ 权限 ：悬浮窗 + 无障碍 + 投屏三项授权齐全后再测全流程。
+ 29.3 root 与签名风险
+ 原包需 root + LSPosed（签名一致），SystemUI hook 在 OEM 定制 ROM 上可能被阉割；投屏 MediaProjection 在新版 Android 需前台服务 + 用户确认弹窗，全自动化需系统授权。以上为风险项，发布前应在目标车型/ROM 上回归验证。
+ 30 高德 Hook 完整定位表（19+1 个挂载点）
+ 这是全文最核心的一张表： AmapNaviHook 里实际存在的 19 个 hook 方法 + 1 个 fallback ，精确到"目标类全名、被 hook 方法、参数签名、内部回调类编号、提取的关键字段"。所有内容逐字核对自 AmapNaviHook.smali ，重写高德 hook 时以此表为唯一依据。
+ 30.1 接口类钩子（com.amap.api.navi 系列）
+ A 组：hook 高德 AMap 公共 API 
+ hook 方法 | 目标类 | 目标方法 | 签名 | 回调 | 关键提取 | 
+ hookCameraInfo | AMapNaviListener | updateCameraInfo | AMapNaviCameraInfo[] | $24 | 相机数组个数 → naviActive | 
+ hookCrossInfo | AMapNaviListener | showCross / hideCross / showModeCross | AMapNaviCross /无参/ AMapModelCross | $21/22/23 | $21/$23 → naviActive | 
+ hookLaneInfo | AMapNaviListener | showLaneInfo / hideLaneInfo | AMapLaneInfo /无参 | $19/20 | $19 → getLaneCount() | 
+ hookLocationForSpeed | AMapNaviListener | onLocationChange | AMapNaviLocation | $18 | getSpeed() → sSpeed | 
+ hookNaviInfoUpdate | AMapNaviListener | onNaviInfoUpdate | NaviInfo | $7 | 12 个 getter（见下） | 
+ hookManeuverInfoUpdate | AMapNaviDriveListener （回退 AMapNaviListener ） | onManeuverInfoUpdate | int, Bitmap | $9 | iconType + Bitmap→PNG 存 sIconBitmapBytes | 
+ hookNaviStateChange | AMapNavi （回退 AMapNaviForCar ） | startNavi / stopNavi / onArriveDestination | int /无参/ boolean | $10/11/12 | start→active=true；其余→false + broadcast | 
+ hookServiceArea | AMapNaviListener | onServiceAreaUpdate | AMapServiceAreaInfo[] | $25 | 服务区数组个数 → naviActive | 
+ hookTrafficStatus | AMapNaviListener | onTrafficStatusUpdate | 无参 | $26 | 仅置 naviActive/time | 
+ hookNaviInfoUpdate （$7）的 12 个 getter： getIconType · getCurStepRetainDistance · getCurStepRetainTime · getPathRetainDistance · getPathRetainTime · getNextRoadName · getCurrentRoadName · getRouteRemainLightCount · getNaviType · getPathId · getExitDirectionInfo · getIconBitmap 。
+ 30.2 JNI/AJX 与模块类钩子（com.autonavi.*）
+ B 组：hook 高德 JNI 与 AJX 模块 
+ hook 方法 | 目标类 | 目标方法 | 签名 | 回调 | 关键提取 | 
+ hookCrossNaviInfo | com.autonavi.jni.ae.guide.model.CrossNaviInfo | 动态：单参且参数为本类的方法 | CrossNaviInfo | $5 | nextRoadName / mainAction / curToSegmentDist | 
+ hookCurrentNaviInfo | com.autonavi.jni.ae.route.model.CurrentNaviInfo | 动态：单参且参数为本类的方法 | CurrentNaviInfo | $6 | 剩余距离/时间、分段距离（多字段容错读取） | 
+ hookModuleRouteNotifyNaviInfo | com.autonavi.bundle.routecommon.ajx.ModuleRoute | notifyNaviInfo | JSONObject | $1 | JSON 键 bizType/title/content/status/icon | 
+ hookDriveUtilHomeCompany | com.amap.bundle.drivecommon.tools.DriveUtil | getPOIHome / getPOICompany | 无参 | $14/15 | → getName/getLatitude/getLongitude | 
+ 30.3 动态 Setter 扫描钩子（NaviInfo 数据对象）
+ C 组：反射扫描类内 setter / 通知钩子 
+ hook 方法 | 目标类 | 目标方法 | 触发条件 | 回调 | 关键提取 | 
+ hookNaviInfoDirectUpdate | com.amap.api.navi.model.NaviInfo | 动态：所有单参 setXxx | 仅方法名含 Icon/Road/Dist/Time/Light/Speed | $17 | getIconType() + 过滤后的 setter | 
+ hookNaviInfoFallback | com.amap.api.navi.model.NaviInfo | 动态：所有单参 setXxx | 全部（兜底） | $8 | getIconType/getCurStepRetainDistance/getPathRetainDistance/getPathRetainTime | 
+ hookNotificationBuilder | android.app.Notification$Builder | build | 无参 | $16 | 从 extras 读 title/text 解析距离与路名 | 
+ 30.4 混淆类钩子（当前版本真实类名，原样保留）
+ D 组：混淆短类（u02/wy4/zm2/xy4）——随高德版本可能变化 
+ hook 方法 | 目标类 | 目标方法 | 签名 | 回调 | 关键提取 | 
+ hookU02OnNaviInfoChanged | u02 | onNaviInfoChanged | wy4 | $4 | wy4 字段 a/b/c (String)、 e (int) → processWy4Data | 
+ hookXy4NotifyNaviInfo | xy4 | notifyNaviInfo | wy4 | $2 | wy4 字段 a/b/c (String)、 d/e (int) → processWy4Data | 
+ hookZm2UpdateNaviInfo | zm2 | k | 无参 | $13 | thisObject 字段 b (int→iconType)、 e (String→距离/路名) | 
+ tryHookXy4Fallback | xy4 | 动态： notifyNaviInfo | 运行时取单参类型 | $3 | 同 $2，content 传 null | 
+ 30.5 init 实际挂载顺序（与源码一致）
+ hookModuleRouteNotifyNaviInfo → hookXy4NotifyNaviInfo → hookU02OnNaviInfoChanged
+→ hookCrossNaviInfo → hookCurrentNaviInfo → hookNaviInfoUpdate → hookManeuverInfoUpdate
+→ hookNaviStateChange → hookDriveUtilHomeCompany → hookZm2UpdateNaviInfo
+→ hookNotificationBuilder → hookNaviInfoDirectUpdate → hookLocationForSpeed
+→ hookLaneInfo → hookCrossInfo → hookCameraInfo → hookServiceArea → hookTrafficStatus 
+ 复刻要点
+ 这 19+1 个挂载点覆盖了高德导航数据的 全部进入路径 ：AMap 公共 API（A 组）+ JNI/模块（B 组）+ 数据对象 setter 兜底（C 组）+ 混淆短类速捕（D 组）。四组彼此冗余叠加，保证任一入口被高德改版或混淆遮蔽时其余仍能取到数据。 重写时务必四组全挂 ，缺一组就会在高德的某些导航场景漏数据。
+ 31 重写里程碑排期（可落地甘特）
+ 基于全部 30 章，给出一份按依赖顺序的可交付里程碑排期。以单人或小团队重写"导航+悬浮窗+PiP"核心能力为基准，不含桌面启动器/设置外围。
+ 里程碑（M 编号）→ 范围 → 验收标准 → 参考章节 
+ 阶段 | 范围 | 验收标准 | 章节 | 
+ M1 骨架 | Gradle LSPosed 模块 + xposed_init + Xposed 作用域 8 包 | LSPosed 识别模块、四进程日志可读 | §17/§24/§26 | 
+ M2 高德 hook | §30 四组钩子全挂 + 广播收发打通 | 进导航后 logcat 持续出现广播 | §9/§17/§30 | 
+ M3 数据契约 | NaviContract 常量类 + 接收缓存 | NAVI_UPDATE/HOME_COMPANY 字段对齐 | §25 | 
+ M4 卡片渲染 | NaviCardView + NavArrowView 自绘 | 导航态箭头/距离/方向正确 | §10/§15 | 
+ M5 悬浮窗 | CarPlayOverlayService 悬浮面板 | 导航卡片以右上角悬浮呈现 | §7/§19 | 
+ M6 PiP | SystemUI 尺寸 hook + TaskMover + 锚点 | Home 后高德进 PiP 且缩放到 60% | §6/§11 | 
+ M7 一键到家 | amapuri 深链 + 家/公司卡片 | 点击拉起高德导航到目的地 | §14 | 
+ M8 开机自启 | BootCompleteReceiver display 0 | 重启桌面自动到位 | §21 | 
+ M9 外围（可选） | 投屏 / UCar AIDL / 桌面启动器 | 按车型需要逐步接入 | §20/§22/§28 | 
+ 依赖链：M1→M2→M3→M4→M5，M6 可并行于 M4；M7 依赖 M3（家/公司坐标缓存）；M8 依赖 M5；M9 全程可选。M1~M8 即"能跑通高德导航 + 悬浮卡片 + 画中画"的最小可用版本（MVP）。
+ 完工判据
+ 全文验证锚点已在 §29.2 列出 6 项真机清单。跑满 GPS 车道级 + 城市快速路 + 高速三个场景若箭头/距离/方向不丢帧，即视为 M2~M5 达标；Home 键 PiP、重启自启、一键到家分别兜底 M6~M8。
+ 资料来源
+ carplay_v21.apk 本地解包：apktool 反编译 smali 源码（/data/user/work/dec21）中的 AmapNaviHook.smali、xphook.smali、CarPlayHelper*.smali、NaviCardView.smali、CarPlayOverlayService.smali、UCarMapServiceStub.smali、AndroidManifest.xml、res/values/arrays.xml。用户提供，无外部 URL。
+ 

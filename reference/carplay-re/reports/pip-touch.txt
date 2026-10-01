@@ -1,0 +1,276 @@
+ 
+ 画中画触摸行为分析报告 — PIP2误入音乐界面根因研究 
+ 画中画触摸行为分析报告
+ PIP2 误入音乐界面根因研究 · 基于APK反编译逆向分析
+ APK 最新.apk (9.0 MB) 
+ 应用包名 com.leting 
+ 工具 jadx 1.5.0 + apktool 2.9.3 
+ 日期 2026-07-30 
+ 核心结论
+ PIP1 和 PIP2 的 触摸分发代码完全相同 ，都通过 su -c input -d <displayId> tap/swipe 向 VirtualDisplay 注入触摸事件。两者行为差异的根因 不在于代码逻辑不同 ，而在于 被镜像的应用自身的特性差异 ：
+ PIP1 默认镜像 高德地图 （com.autonavi.minimap），导航类应用在副屏上运行稳定，不会主动跳回主屏
+ PIP2 默认镜像 Luna Music （com.luna.music），音乐类应用可能包含点击后调用 startActivity 跳转主屏的 UI 元素，导致"误入音乐界面"
+ 同时， su -c input 命令的 异步执行延迟 和 VirtualDisplay 生命周期竞态 也会加剧偶发性问题
+ 1. 应用整体架构
+ 该APK是 CarWithX 车联助手 ，一个车载互联启动器应用。它通过创建 VirtualDisplay （虚拟显示器）在车机屏幕上实现多个"画中画"浮窗，每个浮窗可以镜像运行一个独立的应用。
+ 应用的核心技术栈包括：
+ VirtualDisplay ：创建虚拟屏幕，将应用启动到虚拟屏幕上运行
+ SurfaceView 覆盖层 ：在车机主屏上显示虚拟屏幕的内容
+ Root (su) 触摸注入 ：通过 su -c input -d <displayId> 将覆盖层上的触摸事件转发到虚拟屏幕
+ Xposed Hook ：Hook SystemUI 的 PiP 窗口大小计算逻辑
+ TaskMover ：通过 am stack move-task 在显示器间迁移任务
+ 车机屏幕被划分为多个可配置区域（areaA、areaB、areaC），每个区域可分配不同的插件类型： app 、 music 、 msgbox 、 pip 、 pip2 、 widget 。
+flowchart TB
+ subgraph CarDisplay["车机主显示器 (Display 0)"]
+ A["MainActivity
+FrameLayout 容器"]
+ A --> AreaA["areaA 容器"]
+ A --> AreaB["areaB 容器"]
+ A --> AreaC["areaC 容器"]
+ end
+ AreaA --> PIP1["PIP1 视图
+b1.c (PipUI)"]
+ AreaB --> PIP2["PIP2 视图
+b1.e (PipUI2)"]
+ PIP1 --> SV1["ModSurfaveView
+(myscreen)"]
+ PIP2 --> SV2["ModSurfaveView
+(myscreen)"]
+ SV1 -.显示内容.-> VD1["VirtualDisplay 'gdj'
+(高德地图)"]
+ SV2 -.显示内容.-> VD2["VirtualDisplay 'gdj2'
+(Luna Music)"]
+ SV1 -.触摸注入.-> CMD1["su -c input -d <id1> tap x y"]
+ SV2 -.触摸注入.-> CMD2["su -c input -d <id2> tap x y"]
+ CMD1 -.注入到.-> VD1
+ CMD2 -.注入到.-> VD2
+ style PIP1 fill:#1a3a5c,stroke:#58a6ff,color:#e6edf3
+ style PIP2 fill:#3c2a1a,stroke:#f0883e,color:#e6edf3
+ style VD1 fill:#1a3a5c,stroke:#58a6ff,color:#e6edf3
+ style VD2 fill:#3c2a1a,stroke:#f0883e,color:#e6edf3
+ 图 1：CarWithX 双画中画架构示意图 
+ 2. PIP1 与 PIP2 技术架构对比
+ 通过反编译分析，PIP1 和 PIP2 的代码结构几乎完全对称，分别由两个独立的类组实现：
+ PIP1 PipUI 
+ 源文件 ： b1/c.java (PipUI)
+ b1/d.java (PipTouchDispatcher)
+ b1/b.java (SurfaceHolder.Callback)
+ 默认镜像应用 ： com.autonavi.minimap （高德地图）
+ 布局宽度 ：屏幕宽度的 60%
+ VirtualDisplay 名称 ： gdj 
+ 显示ID字段 ： c.f3505f 
+ 配置键 ： mirror_app_package 
+ PIP2 PipUI2 
+ 源文件 ： b1/e.java (PipUI2)
+ b1/h.java (PipTouchDispatcher2)
+ b1/f.java (SurfaceHolder.Callback) 
+ 默认镜像应用 ： com.luna.music （Luna Music）
+ 布局宽度 ：屏幕宽度的 40%
+ VirtualDisplay 名称 ： gdj2 
+ 显示ID字段 ： e.f3514f 
+ 配置键 ： mirror_app_package2 
+ 关键发现
+ 除默认镜像应用、布局宽度和日志标签不同外，PIP1 和 PIP2 的 触摸分发逻辑完全相同 。两者都使用相同的 su -c input -d 机制注入触摸事件，代码结构逐行一致。
+ 3. 触摸事件分发机制详解
+ 以下是 PIP2 的触摸分发器 b1/h.java （PipTouchDispatcher2）的完整反编译代码，PIP1 的 b1/d.java 逻辑与此 完全一致 ，仅类名和静态字段引用不同：
+ // b1/h.java — PIP2 触摸分发器 (PipTouchDispatcher2.java) 
+ public final class h implements View.OnTouchListener {
+ private float f3518a; // 按下时 X 坐标 
+ private float f3519b; // 按下时 Y 坐标 
+ private long f3520c; // 按下时时间戳 
+ @Override 
+ public boolean onTouch ( View view, MotionEvent motionEvent) {
+ int actionMasked = motionEvent.getActionMasked();
+ // ACTION_DOWN (0): 记录按下位置，返回 true 消费事件 
+ if (actionMasked == 0 ) { 
+ this .f3518a = motionEvent.getX();
+ this .f3519b = motionEvent.getY();
+ this .f3520c = motionEvent.getEventTime();
+ return true ; // 消费触摸，不向下传递 
+ }
+ // 非 ACTION_UP 或 显示ID 
+ if (actionMasked != 1 || (actionMasked = ( int ) e .f3514f) 0 ) { 
+ return true ;
+ }
+ // ACTION_UP: 计算位移，构建 input 命令 
+ int downX = ( int ) this .f3518a;
+ int downY = ( int ) this .f3519b;
+ int upX = ( int ) motionEvent.getX();
+ int upY = ( int ) motionEvent.getY();
+ StringBuilder sb = new StringBuilder ( "input -d " );
+ sb.append(displayId);
+ if ( Math .abs(upX - downX) >= 10 || Math .abs(upY - downY) >= 10 ) {
+ // 位移 >= 10px: 判定为滑动(swipe) 
+ sb.append( " swipe " ).append(downX).append( " " ).append(downY)
+ .append( " " ).append(upX).append( " " ).append(upY);
+ // 持续时间限制在 50ms ~ 2000ms 
+ long duration = motionEvent.getEventTime() - this .f3520c;
+ if (duration 50 ) duration = 50 ;
+ if (duration > 2000 ) duration = 2000 ;
+ sb.append( " " ).append(duration);
+ } else {
+ // 位移 
+ sb.append( " tap " ).append(upX).append( " " ).append(upY);
+ }
+ // 通过 root 执行 input 命令注入到 VirtualDisplay 
+ try { 
+ Runtime .getRuntime().exec( new String []{ "su" , "-c" , sb.toString()}); 
+ return true ; 
+ } catch ( Throwable th) { 
+ Log .e( "CarWithX-PIP2" , "PIP2 touch injection failed" , th); 
+ return true ; 
+ } 
+ }
+} 
+ 关键设计缺陷
+ Runtime.getRuntime().exec() 是异步的 ——它启动 su 进程后立即返回， 不等待命令执行完成 。这意味着从用户抬手到触摸真正注入 VirtualDisplay 之间存在 不可预测的延迟 （通常 50-200ms+），在此期间被镜像应用的 UI 可能已经发生变化。
+ 触摸事件的处理流程如下图所示：
+sequenceDiagram
+ participant U as 用户手指
+ participant SV as SurfaceView 覆盖层
+ participant TD as TouchDispatcher
+ participant SU as su -c 进程
+ participant VD as VirtualDisplay
+ participant App as 镜像应用
+ U->>SV: ACTION_DOWN (x, y)
+ SV->>TD: onTouch(action=0)
+ TD-->>TD: 记录 x, y, 时间戳
+ TD-->>SV: return true (消费)
+ Note over U,VD: ⚠️ 异步间隙 (用户可能移动手指或UI变化)
+ U->>SV: ACTION_UP (x', y')
+ SV->>TD: onTouch(action=1)
+ TD->>TD: 计算 tap/swipe
+ TD->>SU: exec("su -c input -d tap x y")
+ TD-->>SV: return true (立即返回)
+ Note over SU,VD: su进程启动延迟 (~50-100ms)
+ Note over SU,VD: input命令执行延迟 (~20-50ms)
+ SU->>VD: 注入 tap 事件
+ VD->>App: MotionEvent(x, y)
+ App->>App: 处理点击
+ Note over App: ⚠️ 如果点击命中"跳转主屏"
+的UI元素，应用会调用
+startActivity 迁移到 Display 0
+ 图 2：触摸事件注入时序图（突出异步延迟） 
+ 4. 布局结构分析
+ PIP1 和 PIP2 共用同一个布局文件 pip.xml ：
+ <!-- res/layout/pip.xml --> 
+< androidx.constraintlayout.widget.ConstraintLayout 
+ android:layout_width= "fill_parent" 
+ android:layout_height= "fill_parent" >
+ <!-- touchpad: 初始 wrap_content，几乎不可见 --> 
+ < View 
+ android:id= "@id/touchpad" 
+ android:visibility= "visible" 
+ android:layout_width= "wrap_content" 
+ android:layout_height= "wrap_content" />
+ <!-- myscreen: 全屏 SurfaceView，显示 VirtualDisplay 内容 --> 
+<span class="hl"> < com.leting.auto.ModSurfaveView 
+ android:id= "@id/myscreen" 
+ android:layout_width= "fill_parent" 
+ android:layout_height= "fill_parent" /> 
+</ androidx.constraintlayout.widget.ConstraintLayout > 
+ 在构造函数中（ b1/c.java 和 b1/e.java ），两个 View 的触摸处理被配置为：
+ touchpad 视图： setOnClickListener(null) + setClickable(false) — 禁用点击
+ myscreen (SurfaceView)： setOnTouchListener(new PipTouchDispatcher()) + setClickable(true) — 启用触摸拦截
+ 由于 onTouch 始终返回 true ，Android View 系统层面不会将触摸事件传递给下层视图或触发 performClick() 。
+ 5. 根因分析
+ 既然 PIP1 和 PIP2 的触摸分发代码完全相同，为什么只有 PIP2 会出现"误入音乐界面"的问题？经过深入分析，确认以下 四个层面的原因 ：
+ 1
+ 被镜像应用自身的"跳转主屏"行为（主因）
+ 这是最核心的原因。 与软件本身有直接关系 。
+ 当 input -d <displayId> tap x y 将点击注入 VirtualDisplay 后，被镜像的应用会处理这个点击事件。关键区别在于：
+ 高德地图（PIP1） ：作为导航应用，其 UI 元素被设计为在副屏上稳定运行，点击操作（如地图缩放、路线查看）不会触发跳转到主屏的行为
+ Luna Music（PIP2） ：音乐类应用通常包含"点击专辑封面打开完整播放器"、"点击歌曲标题跳转详情页"等 UI 元素。当这些元素被点击时，应用内部调用 startActivity 但 未设置 setLaunchDisplayId() ，导致应用被重新启动到默认显示器（Display 0 = 主车机屏）
+ 这就解释了为什么 有时候 会进入音乐界面——只有当点击恰好命中这类"跳转"UI元素时才会发生。不同位置、不同操作命中概率不同，因此表现为偶发现象。
+ 2
+ su -c input 命令的异步执行延迟
+ Runtime.getRuntime().exec(new String[]{"su", "-c", ...}) 是 异步 调用——它启动 su 进程后立即返回 true ，不等待 input 命令执行完成。
+ 整个注入链路的延迟构成：
+ 阶段 | 耗时估算 | 说明 | 
+ su 进程启动 | 30-100ms | fork + exec su 二进制，检查 root 权限 | 
+ input 命令解析 | 10-30ms | 解析命令行参数，查找目标 display | 
+ 触摸事件注入 | 5-20ms | 通过 InputManager 注入 MotionEvent | 
+ 总计延迟 | 45-150ms+ | 用户抬手到应用收到触摸的延迟 | 
+ 在此延迟期间，音乐应用的 UI 可能因动画、加载等发生变化，导致注入的点击 落在了与用户预期不同的 UI 元素上 。
+ 3
+ VirtualDisplay 生命周期竞态
+ 在 MainActivity.onResume() 中，每次界面恢复都会调用 b1.e.h(this) 重新部署 PIP2 的镜像应用：
+ public void onResume () {
+ super .onResume();
+ // ... 
+ b1.c.h( this ); // 重新部署 PIP1 
+ b1.e.h( this ); // 重新部署 PIP2 — 每次resume都执行 
+}
+ // b1/e.java — h() 方法 
+ public static void h ( Context context) {
+ if (f3512d == null || f3514f 0 ) return ;
+ String pkg = g(context); // "com.luna.music" 
+ // 尝试迁移已有任务到 VirtualDisplay 
+ if (! c1 .h.d(context, pkg, f3514f)) { 
+ // 迁移失败则重新启动 
+ c1 .h.e(context, pkg, f3514f);
+ }
+} 
+ c1.h.d() 方法内部执行了一个带 sleep 0.15 的 shell 脚本来迁移任务：
+ // c1/h.java — d() 方法中的 root 命令 
+ Runtime .getRuntime().exec( new String []{ "su" , "-c" ,
+ "sleep 0.15; ... am stack move-task \"$TASK\" \"$ROOT\" true" 
+}).waitFor(); 
+ 在这 150ms 的 sleep 期间 ，音乐应用的任务可能仍在主显示器上。如果用户恰在此窗口内点击 PIP2 区域，触摸虽然被 SurfaceView 拦截（返回 true），但 input -d 注入可能因目标应用未就绪而无效，或注入到了错误的上下文中。
+ 4
+ ACTION_CANCEL 未处理 + 坐标映射时序
+ 触摸分发器只处理了 ACTION_DOWN (0) 和 ACTION_UP (1)， 未处理 ACTION_CANCEL (3) 。当系统因某些原因（如父视图拦截、窗口变化）发送 ACTION_CANCEL 时，触摸被消费但无注入发生——用户会感觉点击"没有反应"，可能再次点击，增加误触概率。
+ 此外， input -d 命令使用的坐标直接来自 SurfaceView 的 MotionEvent ，而 VirtualDisplay 的实际分辨率可能在 surfaceChanged 回调之前与 SurfaceView 不匹配。如果在 VirtualDisplay 尚未完成 resize 时注入触摸，坐标会偏移，导致点击命中错误的 UI 元素。
+ 6. 为什么 PIP1 没有此问题
+ 对比维度 | 
+ PIP1 (高德地图) | 
+ PIP2 (Luna Music) | 
+ 应用类型 | 
+ 导航应用 | 
+ 音乐播放器 | 
+ 副屏兼容性 | 
+ 好——导航应用被设计为可在副屏稳定运行 | 
+ 差——音乐应用可能未针对副屏优化 | 
+ 点击跳转主屏的UI | 
+ 无——导航操作（缩放、选点）不触发 startActivity | 
+ 有——点击封面/标题/展开按钮可能触发 startActivity | 
+ 布局宽度 | 
+ 60%（更大，点击精度要求低） | 
+ 40%（更小，更容易误触边缘元素） | 
+ UI 动画频率 | 
+ 低——地图视图相对静态 | 
+ 高——播放动画、进度条、歌词滚动等 | 
+ 触摸分发代码 | 
+ 完全相同 （b1/d.java vs b1/h.java） | 
+ 结论
+ PIP1 不会误入软件的原因是 高德地图本身不会在副屏点击时跳转主屏 。相同的触摸注入机制对高德地图有效，但对 Luna Music 无效，因为音乐应用自身的代码逻辑会在特定点击位置触发跳转主屏行为。这与 CarWithX 应用的代码无关，而是 被镜像应用自身的行为特征决定的 。
+ 7. 总结与建议
+ 问题归因
+ 跟软件有关系吗？ 有，但不是 CarWithX 自身的代码bug。根因在于 被镜像的音乐应用（com.luna.music）自身的 UI 行为 ——某些点击操作会调用 startActivity 将应用跳转到主显示器。
+ 跟什么有关系？ 三个层面：
+ 被镜像应用的行为特性 （主因）——音乐应用的某些UI元素点击后会跳转主屏
+ su -c input 异步延迟 （加剧）——触摸注入有45-150ms延迟，期间UI可能变化导致误触
+ VirtualDisplay 生命周期竞态 （偶发）——onResume时150ms的sleep窗口期内状态不一致
+ 可能的缓解方案
+ 更换镜像应用 ：尝试使用其他对副屏兼容性更好的音乐应用（如配置 mirror_app_package2 为其他包名）
+ 避免点击易触发的UI元素 ：了解音乐应用中哪些区域点击会跳转主屏（通常是专辑封面、歌曲标题、"展开"按钮等），操作时避开这些区域
+ 优化触摸注入（需开发者修改） ：将 su -c input 替换为更底层的 InputManager.injectInputEvent() （需反射或Xposed），消除 su 进程启动延迟
+ 增加 ACTION_CANCEL 处理（需开发者修改） ：在 PipTouchDispatcher2 中处理 ACTION_CANCEL ，避免触摸被"吞掉"后用户反复点击
+ 增加 VirtualDisplay 就绪检查（需开发者修改） ：在 onResume 部署完成前禁用触摸拦截，避免竞态窗口内的无效注入
+ 分析来源
+ 用户上传 APK 文件 (最新.apk)，通过 jadx 1.5.0 反编译获取 Java 源码 
+ 用户上传文件 
+ b1/h.java (PipTouchDispatcher2.java) — PIP2 触摸分发器完整源码 
+ APK 反编译产物 
+ b1/d.java (PipTouchDispatcher.java) — PIP1 触摸分发器完整源码 
+ APK 反编译产物 
+ b1/e.java (PipUI2.java) / b1/c.java (PipUI.java) — PiP 界面初始化与 VirtualDisplay 创建 
+ APK 反编译产物 
+ c1/h.java (FakeStart.java) — 应用启动与任务迁移工具类 
+ APK 反编译产物 
+ com/leting/xposed/xphook.java — SystemUI PiP 窗口 Hook 逻辑 
+ APK 反编译产物 
+ res/layout/pip.xml — PiP 布局文件，通过 apktool 2.9.3 解码 
+ APK 资源解码产物 
+ com/leting/MainActivity.java — 主 Activity 中 PIP1/PIP2 创建与生命周期管理 
+ APK 反编译产物 

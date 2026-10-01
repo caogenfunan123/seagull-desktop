@@ -1,0 +1,188 @@
+package com.seagull.carlauncher;
+
+import android.app.Activity;
+import android.graphics.Color;
+import android.os.Bundle;
+import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.View;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+/**
+ * 布局模式选择器 + 组件条配置。
+ * 对齐野菜桌面的「布局」（一个窗口占满/主副/三等分…）与「快捷栏」设置组。
+ * 这里的"布局"作用于桌面自身的分区，不依赖任何特权 —— 公开版可完整交付。
+ */
+public class LayoutModeActivity extends Activity {
+
+    private LauncherModel model;
+    private LinearLayout listCol;
+
+    private int dp(float v) {
+        return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v,
+                getResources().getDisplayMetrics()));
+    }
+
+    @Override protected void onCreate(Bundle b) {
+        super.onCreate(b);
+        model = new LauncherModel(this);
+        setContentView(build());
+    }
+
+    private View build() {
+        ScrollView sv = new ScrollView(this);
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setBackgroundColor(getColor(R.color.ground));
+        col.setPadding(dp(16), dp(12), dp(16), dp(18));
+
+        LinearLayout head = new LinearLayout(this);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView back = new TextView(this);
+        back.setText("← 返回桌面");
+        back.setTextColor(getColor(R.color.leaf));
+        back.setTextSize(15);
+        back.setOnClickListener(v -> finish());
+        head.addView(back);
+        TextView t = new TextView(this);
+        t.setText("  布局与组件");
+        t.setTextColor(getColor(R.color.text));
+        t.setTextSize(17);
+        head.addView(t);
+        col.addView(head);
+
+        col.addView(section("桌面布局（点击切换，立即生效）"));
+        listCol = new LinearLayout(this);
+        listCol.setOrientation(LinearLayout.VERTICAL);
+        col.addView(listCol);
+
+        col.addView(section("组件条（点一下开/关）"));
+        for (int i = 0; i <= 4; i++) col.addView(widgetRow(i));
+
+        col.addView(section("其他"));
+        col.addView(toggleRow("显示应用名称", model.showLabels, v -> {
+            model.showLabels = !model.showLabels;
+            model.save();
+            rebuildRows();
+        }));
+
+        col.addView(btn("预览网格列数", v -> {
+            model.mode = model.mode == LauncherModel.Mode.GRID
+                    ? LauncherModel.Mode.DENSE : LauncherModel.Mode.GRID;
+            model.save();
+            rebuildRows();
+            Toast.makeText(this, "已切到 " + model.mode.label, Toast.LENGTH_SHORT).show();
+        }));
+
+        return wrap(sv, col);
+    }
+
+    private View wrap(ScrollView sv, LinearLayout col) { sv.addView(col); return sv; }
+
+    private void rebuildRows() {
+        listCol.removeAllViews();
+        for (LauncherModel.Mode m : LauncherModel.Mode.values()) {
+            listCol.addView(modeRow(m));
+        }
+        // 重建"显示名称"与组件行状态
+        setContentView(build());
+    }
+
+    private View modeRow(final LauncherModel.Mode m) {
+        boolean on = model.mode == m;
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(13), dp(12), dp(13));
+        row.setBackgroundColor(on ? getColor(R.color.card) : getColor(R.color.panel));
+
+        TextView tv = new TextView(this);
+        tv.setText((on ? "● " : "○ ") + m.label);
+        tv.setTextColor(on ? getColor(R.color.leaf) : getColor(R.color.text));
+        tv.setTextSize(14);
+        row.addView(tv, new LinearLayout.LayoutParams(0, -2, 1f));
+
+        row.setOnClickListener(v -> {
+            model.mode = m;
+            model.save();
+            Toast.makeText(this, "布局：" + m.label, Toast.LENGTH_SHORT).show();
+            setContentView(build());
+        });
+
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
+        p.topMargin = dp(6);
+        row.setLayoutParams(p);
+        return row;
+    }
+
+    private View widgetRow(final int id) {
+        String[] names = {"时钟", "日期", "电量", "内存", "温度"};
+        boolean on = model.hasWidget(id);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(12), dp(12), dp(12));
+        row.setBackgroundColor(on ? getColor(R.color.card) : getColor(R.color.panel));
+        TextView tv = new TextView(this);
+        tv.setText((on ? "☑ " : "☐ ") + names[id]);
+        tv.setTextColor(on ? getColor(R.color.leaf) : getColor(R.color.text));
+        tv.setTextSize(14);
+        row.addView(tv);
+        row.setOnClickListener(v -> {
+            model.toggleWidget(id);
+            setContentView(build());
+        });
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
+        p.topMargin = dp(6);
+        row.setLayoutParams(p);
+        return row;
+    }
+
+    private View toggleRow(String label, boolean on, View.OnClickListener l) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(12), dp(12), dp(12));
+        row.setBackgroundColor(on ? getColor(R.color.card) : getColor(R.color.panel));
+        TextView tv = new TextView(this);
+        tv.setText((on ? "☑ " : "☐ ") + label);
+        tv.setTextColor(on ? getColor(R.color.leaf) : getColor(R.color.text));
+        tv.setTextSize(14);
+        row.addView(tv);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
+        p.topMargin = dp(6);
+        row.setLayoutParams(p);
+        row.setOnClickListener(l);
+        return row;
+    }
+
+    private View btn(String label, View.OnClickListener l) {
+        TextView tv = new TextView(this);
+        tv.setText(label);
+        tv.setTextColor(getColor(R.color.text));
+        tv.setTextSize(14);
+        tv.setGravity(Gravity.CENTER);
+        tv.setPadding(dp(10), dp(13), dp(10), dp(13));
+        tv.setBackgroundColor(getColor(R.color.card));
+        tv.setOnClickListener(l);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
+        p.topMargin = dp(8);
+        tv.setLayoutParams(p);
+        return tv;
+    }
+
+    private TextView section(String s) {
+        TextView tv = new TextView(this);
+        tv.setText(s);
+        tv.setTextColor(getColor(R.color.leaf));
+        tv.setTextSize(13);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-2, -2);
+        p.topMargin = dp(20); p.bottomMargin = dp(6);
+        tv.setLayoutParams(p);
+        return tv;
+    }
+}

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Xposed scope: only hook the NetEase Cloud Music IoT package -->
+    <string-array name="xposed_scope">
+        <item>com.netease.cloudmusic.iot</item>
+    </string-array>
+</resources>
