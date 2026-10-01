@@ -21,6 +21,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
@@ -194,6 +196,35 @@ public class SettingsSectionActivity extends Activity {
                 });
             }
         }
+
+        sectionLabel("每个应用默认开在哪个窗口");
+        note("设成 1 号 / 2 号后，点 Dock 图标直接进对应小窗；没设的应用点图标全屏打开。");
+        List<String> dockKeys = new ArrayList<>(model.dock);
+        if (dockKeys.isEmpty()) dockKeys.addAll(defaultDockKeys(model));
+        for (int i = 0; i < dockKeys.size(); i++) {
+            final LauncherModel.App a = model.find(dockKeys.get(i));
+            if (a == null) continue;
+            int w = model.windowOf(a.pkg);
+            choiceRow(a.label, w == 0 ? "全屏" : (w == 1 ? "1 号窗口" : "2 号窗口"), () -> {
+                String[] names = {"全屏", "1 号窗口", "2 号窗口"};
+                choiceDialog(a.label, names, w, k -> {
+                    model.setDockWindow(a.pkg, k);
+                    render();
+                });
+            });
+        }
+    }
+
+    /** Dock 为空时设置页也要能配窗口：沿用桌面那套默认候选。 */
+    private List<String> defaultDockKeys(LauncherModel m) {
+        String[] prefer = {"com.android.dialer", "com.android.mms", "com.android.chrome",
+                "com.android.camera", "com.android.settings"};
+        List<String> out = new ArrayList<>();
+        for (String p : prefer) {
+            for (LauncherModel.App a : m.allApps) if (a.pkg.equals(p)) { out.add(a.key()); break; }
+        }
+        if (out.isEmpty()) for (int i = 0; i < Math.min(5, m.allApps.size()); i++) out.add(m.allApps.get(i).key());
+        return out;
     }
 
     private void quickbarBody() {

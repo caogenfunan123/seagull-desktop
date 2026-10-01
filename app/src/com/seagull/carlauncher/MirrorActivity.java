@@ -41,6 +41,19 @@ public class MirrorActivity extends Activity {
     private static final int REQ_CONSENT = 0x5EA4;
     private static final String PREFS = "seagull";
 
+    /** 外部（桌面 Dock）指定「把这个应用搬进 slot 号槽位」。 */
+    public static final String EXTRA_PKG = "pkg";
+    public static final String EXTRA_SLOT = "slot";
+
+    /** 供桌面调用：打开镜像页并指定目标应用与槽位（1/2）。 */
+    public static Intent intentFor(android.content.Context ctx, String pkg, int slot) {
+        Intent i = new Intent(ctx, MirrorActivity.class);
+        i.putExtra(EXTRA_PKG, pkg);
+        i.putExtra(EXTRA_SLOT, slot);
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        return i;
+    }
+
     private MediaProjection projection;
     private MirrorSlot slotA, slotB;
 
@@ -61,6 +74,19 @@ public class MirrorActivity extends Activity {
         }
         slotA = new MirrorSlot(this, "pip1");
         slotB = new MirrorSlot(this, "pip2");
+        maybeAutoDeploy();
+    }
+
+    /** 桌面 Dock 指定了目标应用：先写进槽位，再自动走录屏授权链。 */
+    private void maybeAutoDeploy() {
+        if (getIntent() == null) return;
+        String pkg = getIntent().getStringExtra(EXTRA_PKG);
+        if (pkg == null || pkg.isEmpty()) return;
+        int slot = getIntent().getIntExtra(EXTRA_SLOT, 1);
+        if (slot < 1 || slot > 2) slot = 1;
+        savePkg(slot, pkg);
+        appendDiag("桌面指定：槽 " + (slot == 1 ? "A" : "B") + " → " + pkg);
+        ui.postDelayed(this::requestConsent, 500);
     }
 
     @Override protected void onResume() {

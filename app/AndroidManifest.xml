@@ -100,6 +100,13 @@
             android:label="@string/all_apps"
             android:configChanges="keyboardHidden|orientation|screenSize" />
 
+        <activity
+            android:name=".SearchActivity"
+            android:exported="false"
+            android:label="搜索"
+            android:windowSoftInputMode="adjustResize|stateVisible"
+            android:configChanges="keyboardHidden|orientation|screenSize" />
+
         <activity android:name=".FolderActivity" android:exported="false"
             android:label="@string/folder_title" />
         <activity android:name=".LayoutModeActivity" android:exported="false"

@@ -70,6 +70,26 @@ public class LayoutModeActivity extends Activity {
             rebuildRows();
         }));
 
+        col.addView(btn("自动归类（按包名分文件夹）", v -> {
+            int made = model.autoGroup();
+            Toast.makeText(this, made > 0
+                    ? "已分出 " + made + " 个分类文件夹"
+                    : "没有需要归类的应用（已在文件夹里）", Toast.LENGTH_SHORT).show();
+            setContentView(build());
+        }));
+
+        col.addView(btn("解散全部文件夹（" + model.folders.size() + " 个）", v ->
+                new android.app.AlertDialog.Builder(this)
+                        .setTitle("解散全部文件夹？")
+                        .setMessage("所有应用都会回到主屏。")
+                        .setPositiveButton("解散", (d, w) -> {
+                            model.dissolveAllFolders();
+                            Toast.makeText(this, "已解散", Toast.LENGTH_SHORT).show();
+                            setContentView(build());
+                        })
+                        .setNegativeButton("取消", null)
+                        .show()));
+
         col.addView(btn("预览网格列数", v -> {
             model.mode = model.mode == LauncherModel.Mode.GRID
                     ? LauncherModel.Mode.DENSE : LauncherModel.Mode.GRID;

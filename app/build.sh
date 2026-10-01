@@ -1,14 +1,19 @@
-#!/data/data/com.dsharnessmobile.shell/files/usr/bin/bash
-# 海鸥桌面 — 纯命令行 APK 构建（无 Gradle），在 Termux 宿主侧运行
+#!/usr/bin/env bash
+# 海鸥桌面 — 纯命令行 APK 构建（无 Gradle）
+# 默认按 Termux 宿主运行；CI / 桌面环境用环境变量覆盖：
+#   SEAGULL_SDK         build-tools 所在目录的父目录（需含 build-tools/<ver>/）
+#   SEAGULL_ANDROID_JAR android.jar 路径
+#   SEAGULL_JAVA_HOME   JDK 路径
 set -e
 
 P="$(cd "$(dirname "$0")" && pwd)"
-SDK="$HOME/.dsh/ubuntu-rootfs/root/opt/android-sdk"
+SDK="${SEAGULL_SDK:-$HOME/.dsh/ubuntu-rootfs/root/opt/android-sdk}"
 BT="$SDK/build-tools/34.0.0"
-ANDROID_JAR="$P/libs/android.jar"
-JAVA_HOME=/data/data/com.dsharnessmobile.shell/files/usr/lib/jvm/java-21-openjdk
-export JAVA_TOOL_OPTIONS="-Duser.home=$HOME"
-export PATH="/data/data/com.dsharnessmobile.shell/files/usr/bin:$JAVA_HOME/bin:$PATH"
+[ -x "$BT/aapt2" ] || BT="$(ls -d "$SDK"/build-tools/*/ 2>/dev/null | tail -1)"
+ANDROID_JAR="${SEAGULL_ANDROID_JAR:-$P/libs/android.jar}"
+JAVA_HOME="${SEAGULL_JAVA_HOME:-/data/data/com.dsharnessmobile.shell/files/usr/lib/jvm/java-21-openjdk}"
+export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:--Duser.home=$HOME}"
+export PATH="$BT:$JAVA_HOME/bin:$PATH"
 
 MIN_API=29
 TARGET_API=33
@@ -17,43 +22,54 @@ KS_PASS=android
 KS_ALIAS=seagull
 
 OUT="$P/out"
-rm -rf "$OUT"; mkdir -p "$OUT/res-c" "$OUT/gen" "$OUT/classes" "$OUT/dex"
+# 每次构建用独立子目录，避免清空历史产物（构建机不删文件）
+STAMP="$(date +%Y%m%d-%H%M%S)"
+RESC="$OUT/res-$STAMP"
+GEN="$OUT/gen-$STAMP"
+CLASSES="$OUT/classes-$STAMP"
+DEX="$OUT/dex-$STAMP"
+mkdir -p "$RESC" "$GEN" "$CLASSES" "$DEX"
 
 echo "== 1/7 编译资源 =="
-aapt2 compile --dir "$P/res" -o "$OUT/res-c/res.zip"
+aapt2 compile --dir "$P/res" -o "$RESC/res.zip"
 
 echo "== 2/7 链接资源 + 生成 R.java =="
-aapt2 link -o "$OUT/base.apk" \
+aapt2 link -o "$OUT/base-$STAMP.apk" \
   -I "$ANDROID_JAR" \
   --manifest "$P/AndroidManifest.xml" \
-  -R "$OUT/res-c/res.zip" \
-  --java "$OUT/gen" \
+  -R "$RESC/res.zip" \
+  --java "$GEN" \
   --min-sdk-version $MIN_API \
   --target-sdk-version $TARGET_API \
   --version-code 1 --version-name 1.0 \
   --auto-add-overlay
 
 echo "== 3/7 javac =="
-find "$P/src" "$OUT/gen" -name '*.java' > "$OUT/sources.txt"
+find "$P/src" "$GEN" -name '*.java' > "$OUT/sources-$STAMP.txt"
 "$JAVA_HOME/bin/javac" -encoding UTF-8 --release 11 -nowarn -Xlint:-options \
   -classpath "$ANDROID_JAR" \
-  -d "$OUT/classes" @"$OUT/sources.txt" 2>&1 | grep -v 'bootstrap class path\|deprecat\|obsolete' > "$OUT/javac.log" || true
-if grep -q 'error:' "$OUT/javac.log"; then echo "javac 失败："; cat "$OUT/javac.log"; exit 1; fi
-grep -v '^Picked up' "$OUT/javac.log" | grep -v '^$' | head -5 || true
+  -d "$CLASSES" @"$OUT/sources-$STAMP.txt" 2>&1 | grep -v 'bootstrap class path\|deprecat\|obsolete' > "$OUT/javac-$STAMP.log" || true
+if grep -q 'error:' "$OUT/javac-$STAMP.log"; then echo "javac 失败："; cat "$OUT/javac-$STAMP.log"; exit 1; fi
+grep -v '^Picked up' "$OUT/javac-$STAMP.log" | grep -v '^$' | head -5 || true
 
 echo "== 4/7 d8 (dex) =="
-"$JAVA_HOME/bin/java" -cp "$P/libs/r8.jar" com.android.tools.r8.D8 \
-  --min-api $MIN_API --lib "$ANDROID_JAR" --output "$OUT/dex" \
-  $(find "$OUT/classes" -name '*.class')
+if [ -f "$P/libs/r8.jar" ]; then
+  "$JAVA_HOME/bin/java" -cp "$P/libs/r8.jar" com.android.tools.r8.D8 \
+    --min-api $MIN_API --lib "$ANDROID_JAR" --output "$DEX" \
+    $(find "$CLASSES" -name '*.class')
+else
+  d8 --min-api $MIN_API --lib "$ANDROID_JAR" --output "$DEX" \
+    $(find "$CLASSES" -name '*.class')
+fi
 
 echo "== 5/7 组装 apk =="
-cd "$OUT/dex"
-zip -q -X "$OUT/base.apk" classes*.dex
+cd "$DEX"
+zip -q -X "$OUT/base-$STAMP.apk" classes*.dex
 cd "$P"
 
 echo "== 6/7 zipalign =="
 if command -v zipalign >/dev/null 2>&1; then
-  zipalign -f -p 4 "$OUT/base.apk" "$OUT/aligned.apk" && mv "$OUT/aligned.apk" "$OUT/base.apk"
+  zipalign -f -p 4 "$OUT/base-$STAMP.apk" "$OUT/aligned-$STAMP.apk" && mv "$OUT/aligned-$STAMP.apk" "$OUT/base-$STAMP.apk"
 else
   echo "   (zipalign 缺失，跳过 — apksigner 输出本身已对齐)"
 fi
@@ -66,7 +82,7 @@ if [ ! -f "$KS" ]; then
     -dname "CN=SeagullCarLauncher, O=Local, C=CN"
 fi
 apksigner sign --ks "$KS" --ks-pass "pass:$KS_PASS" --key-pass "pass:$KS_PASS" \
-  --ks-key-alias "$KS_ALIAS" --out "$OUT/SeagullLauncher.apk" "$OUT/base.apk"
+  --ks-key-alias "$KS_ALIAS" --out "$OUT/SeagullLauncher.apk" "$OUT/base-$STAMP.apk"
 
 apksigner verify --print-certs "$OUT/SeagullLauncher.apk" | head -3
 ls -l "$OUT/SeagullLauncher.apk"

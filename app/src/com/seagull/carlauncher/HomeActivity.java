@@ -190,6 +190,18 @@ public class HomeActivity extends Activity implements DesktopView.Host {
         });
         topBar.addView(edit);
 
+        TextView search = new TextView(this);
+        search.setText("搜索");
+        search.setTextColor(getColor(R.color.text));
+        search.setTextSize(13);
+        search.setPadding(dp(12), dp(7), dp(12), dp(7));
+        search.setBackgroundColor(getColor(R.color.card));
+        LinearLayout.LayoutParams scp = new LinearLayout.LayoutParams(-2, -2);
+        scp.leftMargin = dp(8);
+        search.setLayoutParams(scp);
+        search.setOnClickListener(v -> startActivity(new Intent(this, SearchActivity.class)));
+        topBar.addView(search);
+
         TextView set = new TextView(this);
         set.setText("设置");
         set.setTextColor(getColor(R.color.text));

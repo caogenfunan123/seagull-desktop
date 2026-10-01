@@ -55,6 +55,14 @@ public class AppListActivity extends Activity {
         title.setTextColor(getColor(R.color.text));
         title.setTextSize(20);
         head.addView(title);
+
+        TextView search = new TextView(this);
+        search.setText("搜索");
+        search.setTextColor(getColor(R.color.leaf));
+        search.setTextSize(15);
+        search.setPadding(dp(14), dp(6), 0, dp(6));
+        search.setOnClickListener(v -> startActivity(new Intent(this, SearchActivity.class)));
+        head.addView(search);
         col.addView(head);
 
         ScrollView sv = new ScrollView(this);

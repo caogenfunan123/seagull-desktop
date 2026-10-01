@@ -5,6 +5,7 @@ app/sources.txt
 *.class
 *.dex
 *.apk
+*.keystore
 
 # 临时文件
 *.tmp

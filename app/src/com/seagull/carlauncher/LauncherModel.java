@@ -216,6 +216,8 @@ public final class LauncherModel {
     public boolean dockAutoHide = false;
     public boolean dockFixed = false;  // 固定（侧栏满了也不收起）
     public boolean dockShowClock = true;
+    /** 每个应用默认开在几号窗口（pkg → 1/2）；没有记录 = 全屏直接启动。 */
+    public final Map<String, Integer> dockWindow = new LinkedHashMap<>();
 
     /* ==================== 状态：快捷栏 ==================== */
 
@@ -379,15 +381,24 @@ public final class LauncherModel {
 
     /* ==================== 主屏与文件夹 ==================== */
 
-    /** 主屏可见 key 列表：pinned ∪ 未被任何文件夹收走的应用（首次自动填满）。 */
+    /**
+     * 主屏可见 key 列表：pinned ∪ 未被文件夹收走的应用（首次自动填满）。
+     *
+     * pinned 为空时（全在文件夹里或首次启动）自动枚举：文件夹只出一个占位 key，
+     * 否则纯文件夹布局会渲染成空桌面。
+     */
     public List<String> homeKeys() {
-        Set<String> inFolder = new HashSet<>();
-        for (Folder f : folders) inFolder.addAll(f.keys);
         List<String> out = new ArrayList<>();
-        for (String k : pinned) if (!out.contains(k)) out.add(k);
-        if (out.isEmpty()) {
-            for (App a : allApps) {
-                if (inFolder.contains(a.key())) continue;
+        if (!pinned.isEmpty()) {
+            for (String k : pinned) if (!out.contains(k)) out.add(k);
+            return out;
+        }
+        Set<String> covered = new HashSet<>();
+        for (App a : allApps) {
+            Folder f = folderOf(a.key());
+            if (f != null) {
+                if (covered.add(f.name)) out.add(a.key());
+            } else if (!out.contains(a.key())) {
                 out.add(a.key());
             }
         }
@@ -451,6 +462,84 @@ public final class LauncherModel {
         save();
     }
 
+    /* ==================== 自动归类 ==================== */
+
+    /** 分类前缀表：按包名开头归类，命中不了的一律进「其他应用」。 */
+    private static final String[][] CATEGORIES = {
+            {"系统", "com.android.", "android.", "com.google.android.", "com.android.chrome",
+                    "com.mi.", "com.miui.", "com.huawei.", "com.hihonor.", "com.oppo.", "com.vivo.",
+                    "com.coloros.", "com.oneplus.", "com.samsung.", "com.meizu.", "com.letv."},
+            {"社交", "com.tencent.mm", "com.tencent.mobileqq", "com.tencent.wework",
+                    "com.sina.weibo", "com.xingin.xhs", "com.zhihu", "com.douban", "com.tieba"},
+            {"影音", "com.tencent.qqlive", "com.qiyi.video", "com.youku.phone", "com.eg.android.AlipayGphone",
+                    "com.netease.cloudmusic", "com.kugou", "com.ximalaya.ting.android",
+                    "com.smile.gifmaker", "com.ss.android.ugc.aweme", "com.ss.android.article.news"},
+            {"导航", "com.autonavi", "com.baidu.BaiduMap", "com.tencent.map", "com.amap.android"},
+            {"购物", "com.taobao", "com.jingdong", "com.xunmeng", "com.sankuai", "com.ele.me",
+                    "me.ele", "com.succot", "com.yy.mobile"},
+            {"游戏", "com.tencent.tmgp", "com.netease.gl", "com.miHoYo", "com.hypergryph", "com.bilibili.game"},
+            {"工具", "com.tencent.mm", "com.android.vending", "com.baidu.searchbox",
+                    "com.autonavi.amapauto", "com.adobe.reader", "com.estrongs.android.pop",
+                    "com.speedsoftware.rootexplorer", "org.videolan.vlc", "com.termux"}
+    };
+
+    /** 包名归到哪个分类名。 */
+    public static String categoryOf(String pkg) {
+        if (pkg == null) return "其他应用";
+        for (String[] c : CATEGORIES) {
+            for (int i = 1; i < c.length; i++) {
+                if (pkg.startsWith(c[i])) return c[0];
+            }
+        }
+        return "其他应用";
+    }
+
+    /**
+     * 自动归类：按包名前缀把散落应用分成分类文件夹。
+     * 已经在文件夹里的不动；只分到 1 个应用的分类自动解散（单应用文件夹没有意义）。
+     * 返回本次新建的文件夹数。
+     */
+    public int autoGroup() {
+        Set<String> inFolder = new HashSet<>();
+        for (Folder f : folders) inFolder.addAll(f.keys);
+        Map<String, Folder> byName = new LinkedHashMap<>();
+        for (Folder f : folders) byName.put(f.name, f);
+
+        List<Folder> made = new ArrayList<>();
+        for (App a : allApps) {
+            if (inFolder.contains(a.key())) continue;
+            String name = categoryOf(a.pkg);
+            Folder f = byName.get(name);
+            if (f == null) {
+                f = new Folder(name);
+                byName.put(name, f);
+                folders.add(f);
+                made.add(f);
+            }
+            f.keys.add(a.key());
+            pinned.remove(a.key());
+        }
+
+        for (Folder f : made) {
+            if (f.keys.size() < 2) dissolveFolderQuiet(f);
+        }
+        save();
+        return made.size();
+    }
+
+    /** dissolveFolder 的静默版（自动归类内部用，避免中途反复落盘）。 */
+    private void dissolveFolderQuiet(Folder f) {
+        for (String k : f.keys) if (!pinned.contains(k)) pinned.add(k);
+        folders.remove(f);
+    }
+
+    /** 解散全部文件夹（整理页用）。 */
+    public void dissolveAllFolders() {
+        List<Folder> copy = new ArrayList<>(folders);
+        for (Folder f : copy) dissolveFolderQuiet(f);
+        save();
+    }
+
     /* ==================== 固定 / 取消 ==================== */
 
     public void pin(String key)   { if (key != null && !pinned.contains(key)) { pinned.add(key); save(); } }
@@ -465,6 +554,20 @@ public final class LauncherModel {
     }
 
     public boolean inDock(String key) { return dock.contains(key); }
+
+    /** 该应用默认开在几号窗口（0 = 全屏直接启动）。 */
+    public int windowOf(String pkg) {
+        Integer v = pkg == null ? null : dockWindow.get(pkg);
+        return v == null ? 0 : v;
+    }
+
+    /** 设默认窗口；slot <= 0 表示改回全屏。 */
+    public void setDockWindow(String pkg, int slot) {
+        if (pkg == null) return;
+        if (slot <= 0) dockWindow.remove(pkg);
+        else dockWindow.put(pkg, slot);
+        save();
+    }
 
     /* ==================== 组件条 ==================== */
 
@@ -582,6 +685,13 @@ public final class LauncherModel {
             o.put("dockAutoHide", dockAutoHide);
             o.put("dockFixed", dockFixed);
             o.put("dockClock", dockShowClock);
+            JSONArray dw = new JSONArray();
+            for (Map.Entry<String, Integer> e : dockWindow.entrySet()) {
+                JSONObject o1 = new JSONObject();
+                o1.put("p", e.getKey()); o1.put("s", e.getValue());
+                dw.put(o1);
+            }
+            o.put("dockWin", dw);
             /* 快捷栏 */
             JSONArray qa = new JSONArray();
             for (QuickSlot q : quickbar) {
@@ -723,6 +833,15 @@ public final class LauncherModel {
             dockAutoHide = o.optBoolean("dockAutoHide", false);
             dockFixed = o.optBoolean("dockFixed", false);
             dockShowClock = o.optBoolean("dockClock", true);
+            JSONArray dw = o.optJSONArray("dockWin");
+            if (dw != null) {
+                for (int i = 0; i < dw.length(); i++) {
+                    JSONObject o1 = dw.optJSONObject(i);
+                    if (o1 == null) continue;
+                    String p = o1.optString("p", "");
+                    if (!p.isEmpty()) dockWindow.put(p, o1.optInt("s", 0));
+                }
+            }
 
             JSONArray qa = o.optJSONArray("quickbar");
             if (qa != null) {
@@ -890,7 +1009,7 @@ public final class LauncherModel {
     private void reset() {
         pinned.clear(); dock.clear(); widgets.clear(); folders.clear();
         quickbar.clear(); wallLib.clear(); tasks.clear(); appScale.clear();
-        lyricHidden.clear();
+        lyricHidden.clear(); dockWindow.clear();
     }
 
     /** 恢复出厂配置 —— 布局、Dock、外观、任务全部换回刚装好的样子。 */
