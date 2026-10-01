@@ -23,7 +23,9 @@ seagull-desktop/
 │   ├── AndroidManifest.xml
 │   └── build.sh               # 7 步无 Gradle 构建流水线
 ├── docs/
-│   ├── ARCHITECTURE.md        # 架构与模块职责
+│   ├── AI-GUIDE.md            # AI 开发指南（怎么改、怎么验证、怎么排障）
+│   ├── ARCHITECTURE.md        # 架构与模块职责（先读这个）
+│   ├── DEVLOG.md              # 批次 A~I 的目标 / 改动 / 复盘
 │   ├── TECHNIQUES.md          # 关键技术：L0~L3 窗口档位、MediaProjection、触摸注入
 │   ├── ORIGINAL-ANALYSIS.md   # 野菜桌面逆向分析结论
 │   ├── REFERENCE-REPOS.md     # 参考仓库索引与可复用点
@@ -38,7 +40,7 @@ seagull-desktop/
 
 ## 快速开始
 
-### 构建
+### 构建（本地）
 
 ```bash
 cd app
@@ -49,9 +51,16 @@ bash build.sh
 构建链路（无 Gradle）：`aapt2 链接资源 → 生成 R.java → javac → d8 → 组包 → zipalign → apksigner`
 
 依赖（Termux / 类 Unix 环境）：`aapt2`(arm64)、JDK 17+、`d8`(R8)、`apksigner`、`android.jar`(API 33)
+路径可用环境变量覆盖：`SEAGULL_SDK` / `SEAGULL_ANDROID_JAR` / `SEAGULL_JAVA_HOME`
 
-> **本机环境注意**：`JAVA_TOOL_OPTIONS=-Duser.home=$HOME`，且不能用 `/tmp`。
-> 详见 `docs/DEVICE-NOTES.md`。
+### 构建（CI，推 main 自动跑）
+
+`.github/workflows/build-apk.yml`：JDK 17 + cmdline-tools + `platforms;android-33` +
+`build-tools;34.0.0`，调同一个 `app/build.sh`，产物作为 artifact `SeagullLauncher-apk` 上传。
+推 main 即可触发，也可在 Actions 页手动 `workflow_dispatch`。
+
+> 开发环境里**不出本地包**，用 `javac` 类型检查兜住编译错误，APK 一律由 CI 产出。
+> 详见 `docs/AI-GUIDE.md` 第 6 节。
 
 ### 安装
 
@@ -83,18 +92,29 @@ pm install -r /data/local/tmp/SeagullLauncher.apk
 
 ## 当前进度
 
+P0（桌面可用）→ P1（特色功能）→ P2（root 增强层）三个阶段的**代码全部落地**，
+共 9 个批次，每批的改动与复盘记在 `docs/DEVLOG.md`。
+
 | 指标 | 数值 |
 |---|---|
-| 源码规模 | 29 个 Java 文件 / 约 6200 行 |
+| 源码规模 | 44 个源文件 + 2 个自检 / 约 10100 行 |
 | 功能清单条目 | 205 条（5 组 / 17 分区） |
-| 已完成 ✅ | 18 条（8%） |
-| 部分完成 🟡 | 10 条 |
-| 未做 ⬜ | 160 条 |
-| 平台不可达 ⛔ | 17 条 |
+| 已完成 ✅ | 逐条状态见 `FEATURE-MATRIX.md` |
+| 平台不可达 ⛔ | 26 条（附证据，见矩阵第六节 D 类） |
 
-逐条状态见 **`FEATURE-MATRIX.md`**，开发顺序见 **`TODO.md`**。
+### 分批交付
 
-> P0-2 设置骨架（SettingsHub 5 组 / 17 分区 + 设置搜索 + 分区页持久化）代码已落地，待真机验收。
+| 批次 | 内容 | 状态 |
+|---|---|---|
+| A | 文件夹闭环 + 应用搜索（拼音） | ✅ |
+| B | Dock 全配置 + 双槽镜像自动部署 | ✅ |
+| C | 快捷栏（功能按钮 + 每布局一份） | ✅ |
+| D | 主题与壁纸（14 主题 / 日夜 / 字号 / 遮罩） | ✅ |
+| E | 屏幕（边距 / 缝 / 方向 / 横竖屏两套 / 信息栏） | ✅ |
+| F | 菜园（三种摆法）+ 小白点悬浮球 | ✅ |
+| G | 天气（Open-Meteo）+ 歌词（媒体会话三来源） | ✅ |
+| H | 自动化任务 + 野菜岛 + 关于页（查更新 / 自更新） | ✅ |
+| I | root 增强层：触摸转发 / 窗口搬运 / 系统监控 | ✅ |
 
 ### 已经跑通的
 
@@ -102,8 +122,15 @@ pm install -r /data/local/tmp/SeagullLauncher.apk
   root `am start --display <id>` 把任意第三方应用搬上去 + root `input -d <id>` 注入触摸。
   真机验证通过（`DisplayDeviceInfo{"seagull-l3test", 960x540, type VIRTUAL, owner com.seagull.carlauncher}`）。
 - **L2 系统画中画**：标准 PiP API，无 root 可用。
-- **应用网格 / Dock / 文件夹 / 启动应用**：公开 API。
-- **系统操作层**：亮度、音量、Wi-Fi、蓝牙、飞行模式、自动校时、强停、清理缓存。
+- **应用网格 / Dock / 文件夹 / 搜索 / 菜园 / 野菜岛**：公开 API。
+- **主题换肤与全局字号**：`Skin` + `BaseActivity`，一处生效。
+- **天气与歌词**：Open-Meteo 公开接口 + `MediaSessionManager`（读别的应用的播放会话无需权限）。
+- **系统操作层**：亮度、音量、Wi-Fi、蓝牙、飞行模式、自动校时、强停、清理缓存、CPU/温度/内存读数。
+
+### 代码已写、未在真机验收的部分
+
+容器里做不了这些验证：root `am task` 搬运命令在这台 ROM 上是否被接受、悬浮窗与录屏授权流程、
+车机上的实际布局与性能。相关条目在矩阵里标 🟡 并写清原因，不标 ✅。
 
 ### 关键结论
 
@@ -111,7 +138,12 @@ pm install -r /data/local/tmp/SeagullLauncher.apk
 但 `MediaProjection.createVirtualDisplay` 走的是另一条路，**公开 app 也能建虚拟屏**——
 这是本项目多窗口方案的基础。详见 `docs/TECHNIQUES.md`。
 
----
+另外两条实测结论（写代码时绕着走）：
+
+- `PlaybackState.getDuration()` 与 `MediaMetadata.getBundle()` 都是 `@hide`，公开 API 读不到，
+  播放时长要从 `METADATA_KEY_DURATION` 取，歌词只能扫 `MediaDescription.getExtras()`。
+- 各家 ROM 对 `am task` 的搬运子命令裁得不一致，所以 `TaskMover` 按顺序试多条并把真实返回摊在设置页，
+  而不是赌一个「通用写法」。
 
 ## 相关仓库
 
