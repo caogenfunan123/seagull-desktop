@@ -128,6 +128,7 @@ public class DesktopView extends FrameLayout {
 
         // 组件条
         renderWidgets(m);
+        widgetStrip.setAlpha(m.widgetStripAlpha / 100f);
 
         // 网格
         grid.removeAllViews();
@@ -157,11 +158,17 @@ public class DesktopView extends FrameLayout {
 
         // Dock
         dockBar.removeAllViews();
-        List<String> dockKeys = m.dock.isEmpty() ? defaultDockKeys(m) : m.dock;
-        for (String k : dockKeys) {
-            LauncherModel.App a = m.find(k);
-            if (a == null) continue;
-            dockBar.addView(appView(a), dockParams());
+        if (m.dockPos == LauncherModel.DockPos.HIDDEN) {
+            dockBar.setVisibility(GONE);
+        } else {
+            dockBar.setVisibility(VISIBLE);
+            List<String> dockKeys = m.dock.isEmpty() ? defaultDockKeys(m) : m.dock;
+            int shownCount = Math.min(dockKeys.size(), m.dockCount);
+            for (int i = 0; i < shownCount; i++) {
+                LauncherModel.App a = m.find(dockKeys.get(i));
+                if (a == null) continue;
+                dockBar.addView(appView(a), dockParams());
+            }
         }
     }
 

@@ -90,6 +90,11 @@ public class HomeActivity extends Activity implements DesktopView.Host {
             desktop.refresh();
             buildTopBar();
         }
+        if (model != null && model.keepScreenOn) {
+            getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } else {
+            getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
     }
 
     @Override protected void onDestroy() {
@@ -194,7 +199,7 @@ public class HomeActivity extends Activity implements DesktopView.Host {
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-2, -2);
         sp.leftMargin = dp(8);
         set.setLayoutParams(sp);
-        set.setOnClickListener(v -> startActivity(new Intent(this, SettingsActivity.class)));
+        set.setOnClickListener(v -> startActivity(new Intent(this, SettingsHubActivity.class)));
         topBar.addView(set);
     }
 

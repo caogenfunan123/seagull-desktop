@@ -60,6 +60,18 @@
             android:configChanges="keyboardHidden|orientation|screenSize" />
 
         <activity
+            android:name=".SettingsHubActivity"
+            android:exported="false"
+            android:label="@string/settings_title"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="keyboardHidden|orientation|screenSize" />
+
+        <activity
+            android:name=".SettingsSectionActivity"
+            android:exported="false"
+            android:configChanges="keyboardHidden|orientation|screenSize" />
+
+        <activity
             android:name=".VirtualDisplayActivity"
             android:exported="false"
             android:label="@string/vd_title"
