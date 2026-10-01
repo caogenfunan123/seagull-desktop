@@ -33,7 +33,9 @@ public final class TaskScan {
         int curDisplay = 0;   // 当前 Display #N 段头声明的 display
         for (String line : dump.split("\n")) {
             if (line.contains("Task{")) {
-                if (!line.contains(pkg)) continue;
+                // 边界匹配：裸 contains 会让 com.foo 命中 com.foobar 的 Task 行
+                // （搬错实例。与 StackScan.lineHasPkg 同一口径）
+                if (!StackScan.lineHasPkg(line, pkg)) continue;
                 int id = taskIdOf(line);
                 if (id < 0) continue;
                 boolean inline = line.contains("displayId=" + displayId);

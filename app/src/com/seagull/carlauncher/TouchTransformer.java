@@ -34,11 +34,14 @@ public interface TouchTransformer {
 
     /**
      * 等比缩放：画布像素 (dstW×dstH) 承载源画面 (srcW×srcH)。
+     * 返回的系数把**画布坐标换算成源画面坐标**（src/dst）—— 触摸落在画布
+     * (x,y)，注入源屏必须是 (x*sx, y*sy)。写反方向的后果：DiPlay 一接线
+     * 触摸整体偏离成目标比例的倒数（960x720 流进 366x348 画布时偏差 5 倍+）。
      * 任一边 ≤0 回落 1（防除零，也防止配置错把触摸打偏）。
      */
     static TouchTransformer scaling(int srcW, int srcH, int dstW, int dstH) {
-        final float sx = (srcW > 0 && dstW > 0) ? (float) dstW / srcW : 1f;
-        final float sy = (srcH > 0 && dstH > 0) ? (float) dstH / srcH : 1f;
+        final float sx = (srcW > 0 && dstW > 0) ? (float) srcW / dstW : 1f;
+        final float sy = (srcH > 0 && dstH > 0) ? (float) srcH / dstH : 1f;
         return new TouchTransformer() {
             @Override public float scaleX() { return sx; }
             @Override public float scaleY() { return sy; }

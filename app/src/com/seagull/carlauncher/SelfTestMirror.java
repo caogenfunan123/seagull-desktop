@@ -3,6 +3,8 @@ package com.seagull.carlauncher;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.VirtualDisplay;
 import android.media.projection.MediaProjection;
 import android.media.projection.MediaProjectionManager;
 import android.util.Log;
@@ -64,14 +66,19 @@ public final class SelfTestMirror {
                 if (mp == null) return;
 
                 int w = 960, h = 540, dpi = 160;
-                var vd = mp.createVirtualDisplay("seagull-l3test", w, h, dpi,
-                        android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
-                                | android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
-                                | android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION,
-                        null, null, null);
+                VirtualDisplay vd = null;
+                try {
+                    vd = mp.createVirtualDisplay("seagull-l3test", w, h, dpi,
+                            DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
+                                    | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
+                                    | DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION,
+                            null, null, null);
+                } catch (Throwable t) {
+                    line("建屏异常: " + t);
+                }
                 int id = vd == null ? -1 : vd.getDisplay().getDisplayId();
                 line("① MediaProjection 建屏 → " + (vd == null ? "null" : "displayId=" + id));
-                if (id <= 0) return;
+                if (id <= 0) { safeStop(mp); return; }
 
                 String comp = RootOps.resolveLauncher(act, TARGET);
                 line("② 目标组件: " + comp);
@@ -117,11 +124,22 @@ public final class SelfTestMirror {
                 }
                 try { vd.release(); } catch (Throwable ignore) {}
                 line("已释放测试屏");
+                // mp.stop() 是硬泄漏：MediaProjection 不 stop，前台服务
+                // PipProjectionService 与投影授权一直活着，直到用户手动杀进程；
+                // while 循环里剩下的 flags 试探也就全废了
+                try { mp.stop(); } catch (Throwable ignore) {}
+                line("已停投影");
             } catch (Throwable t) {
                 line("异常: " + t);
             }
             line("===== 自检结束 =====");
         }, "l3-selftest").start();
+    }
+
+    /** 自检走人任何中途退出路径都要停投影：mp 留在前台等于把授权泄漏给系统。 */
+    private static void safeStop(MediaProjection mp) {
+        if (mp == null) return;
+        try { mp.stop(); } catch (Throwable ignore) {}
     }
 
     /**
@@ -138,13 +156,13 @@ public final class SelfTestMirror {
         }
         boolean granted = RootOps.grantTrustedDisplayRole(ctx);
         line("   角色授予 COMPANION_DEVICE_APP_STREAMING → " + granted + " state=" + RootOps.roleState());
-        android.hardware.display.DisplayManager dm =
-                (android.hardware.display.DisplayManager) ctx.getSystemService(Context.DISPLAY_SERVICE);
+        DisplayManager dm =
+                (DisplayManager) ctx.getSystemService(Context.DISPLAY_SERVICE);
         int sdk = android.os.Build.VERSION.SDK_INT;
         for (int raw : TrustedFlags.candidateFlags()) {
             int flags = TrustedFlags.normalize(raw, sdk);
             String desc = TrustedFlags.describe(flags);
-            android.hardware.display.VirtualDisplay vd = null;
+            VirtualDisplay vd = null;
             try {
                 vd = dm.createVirtualDisplay("seagull-trustprobe", 64, 64, 160, null, flags);
                 if (vd == null) { line("   " + desc + " → null（被拒）"); continue; }

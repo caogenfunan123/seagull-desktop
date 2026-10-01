@@ -627,3 +627,108 @@ describe）全过。VD 常驻、部署串行化等链路与批次 M/L 一致，�
 - 做对：把 ① 和"失焦 UP 外泄"分开修，armed 门闩一次性把两个洞都堵住。
 - 决策：letterbox 用 `am compat` 而不是去要系统签名 API（公开版拿不到），
   命令失败只是日志；`am compat` 对主屏同包也生效，所以 clear 时 reset。
+
+---
+
+## 批次 P — 三轮复盘：并发精读 + 亲自复核 + 自检交叉验证
+
+用户要求"全部代码复盘三次找bug"。执行口径：bug 必须确凿（读代码推出，
+不能靠"可能"），三轮分工——并行 5 个 agent 分组精读 → 我逐条复核
+（滤掉猜的）→ 非平凡逻辑写自检钉住。修复排序：崩溃 → 数据丢失 → 红线 → 泄漏 → 健壮性。
+
+### P0 崩溃（三条，全部真机必现）
+
+1. **`BallService.longPressRun` 没有 `FLAG_ACTIVITY_NEW_TASK`**
+   （BallService.java）：从 Service 上下文 `startActivity` 缺该 flag 直接
+   `AndroidRuntimeException` 秒崩，Android 12 起更严。附带修 onDestroy 的
+   removeCallbacks 与 `snap()` 前 `model.load()`（快照回写会覆盖新配置）。
+2. **`VirtualDisplayActivity` onCreate 没 `host.attach(this)`**：
+   所有回调拿宿主=null 空转。附带 su 探测移后台（原在主线程，root 弹窗 = ANR）、
+   `append` 改 synchronized + 回主线程 setText（跨线程 setText 崩）。
+3. **`Uri.fromFile()` 发安装 intent**（SettingsSectionActivity）：targetSdk 24+
+   = FileUriExposedException，"下载新版本"必崩。项目不许引 androidx，
+   照 FileProvider 最小面自绘 `SeagullFileProvider`（query/insert/delete/update
+   按需实现，files/ 内路径规范化防跨目录穿越）。
+
+### 数据 / 状态正确性
+
+4. **`StackScan` 同一 display 被尾随内容覆盖成 -1**：段头真实形态
+   `displayId=0 stacks=2`，旧取第二个 `split()[1]` 得 `stacks=2` → 再
+   `displayId=0` 又覆盖一次，`segOf` 永远返回 -1 → `taskOnDisplay` 全判
+   "不在" → ensureOnDisplay 自愈会反复误 force-stop 用户应用。
+   改 `leadingInt` 前缀解析（接受尾随内容）+ 包名边界匹配
+   （`lineHasPkg/segHasPkg`，`com.foo` 不再撞 `com.foobar`）。TaskScan 同源。
+   StackListCheck 重写 30 项（尾随段头、前缀碰撞、空输入、taskId 非数字）。
+5. **`TaskMover.frontTask` 找不到任务**：正则只认 `taskId=`，真实 dump 是
+   `Task{hash #123 ...}` → 两种形态都认。
+6. **`am start` 误判成功**：`Warning: Activity not started...` 既无 Error
+   也无 Exception，旧判据（无 Error 即成功）会把"没起来"当成功，于是不
+   自愈。改正向判定：必须含 `Starting` 且无 `Warning`/`Abort`。
+   另加 `safeComponent` 白名单才拼命令。
+7. **`TouchTransformer.scaling` 方向注释与实现相反**（注释 dst→src，
+   代码 src→dst）：TransformCheck 重写 54 项，用方向往返断言钉死。
+   identity 仍恒 1：VD 模式零行为变化是"埋接口不改行为"的兜底。
+8. **`PipBoard.switchFocus` 不撤销来源槽的 armed/longFired**：切焦点后旧槽
+   继续吞后续手势。
+9. **`HomeActivity` sink 每 onResume 漏一个 Activity**：`islandSink`
+   是同一实例但旧代码无 remove，CopyOnWrite 集合永久持有已销毁的
+   Activity（onLyric 每秒调一次 bind）。改 remove + add 恒单例 + onDestroy 摘。
+10. **天气 20 分钟链断**：TICK 早退（weatherAuto=false / ctx==null）时
+    `armed` 留在 true → `arm()` 直接 return，桌面不重启就再也不刷新。
+11. **LauncherModel 两处数据脏**：widgets 存档 `optInt` 把 JSON null 读成 0
+    （时钟组件悄悄复活）；`factoryReset` 漏掉全部标量（用户实测：恢复出厂
+    后字号还停在 130%）→ `resetScalars()` 补齐字号/透明/外观/歌词/天气/权重。
+12. **悬浮球恢复位置只判 <0**：>屏宽的脏值 + FLAG_LAYOUT_NO_LIMITS 直接
+    渲染到屏幕外（用户以为服务挂了）→ 钳回 [0, 屏-球径]。
+13. **桌面拖文件夹按名定位**：`dst.split(":")` 找同名文件夹会串；改走
+    `model.addToFolder/mergeInto`（带 folderOf 迁移），并先判 model() 空。
+14. **QuickBar NPE**：host.model() 空时 `m.quickbar.size()` 秒崩 HomeActivity。
+
+### 泄漏 / 资源
+
+15. **`Caps.exec` 无超时 = ANR 源**（QuickBar/Settings 多处命中）：改 3s
+    超时 + `destroyForcibly` + 输出 256KB 上限，读输出放线程池。
+16. **`VirtualDisplayHost.create` 传 AUTO_MIRROR**：建的是设备分身屏不是
+    绘图屏；displayId 取不到时先 release 再返回。
+17. **`WindowService` 重复建卡不关旧卡**：悬浮窗/VD/投影全泄漏；无 projection
+    时空转前台服务常驻到进程死 → close 时 stopService。
+18. **`SelfTestMirror` 中途 return 不停 mp**：前台服务 + 投影授权活到杀进程。
+19. **`MediaListenerService` onSessionDestroyed/onListenerDisconnected 不
+    unregister**：会话回调留在已销毁 controller 上。
+20. **`LauncherModel` 全量 loadApps 在主线程**：每秒 tick 读配置时也跑一次
+    （每应用一次 loadLabel IPC）。新增 `(ctx, false)` 只读存档重载，
+    歌词/天气/悬浮球/触摸阈值全切过去（pinStatic 仍要全量）。
+21. **`MirrorSlot.touchFor` 懒初始化无锁**：部署线程与触摸主线程都首触，
+    各起一个 HandlerThread，被覆盖的泄漏。
+
+### 安全（红线）
+
+22. **RootMain 私有 socket 无鉴权**：抽象 socket 上任意同命名空间进程可连，
+    等于给任意 app 开"拉起虚拟屏 + 注入触摸"的特权通道 → peer uid 只放行
+    root/system/shell。单行 64KB 上限，超长行读干再拒。
+23. **PrivCodec 脏报文**：`split(" ")` 吞尾随空串；MOTION 的 count 与实参
+    不匹配时静默只取前几段 → `split(-1)` + 长度严格相等。
+24. **MOVE/REMOVE 命令参数**：RootMain 已有 try/catch 兜底，本批次只补
+    `Split(-1)`/空串校验路径。
+
+### 清理
+
+25. **`autoPip` 死代码**：prefs 里从未写入此 key，恒 false。删。
+
+### 验证
+
+- `typecheck.sh`（javac 全量）通过。
+- 自检全套通过：TransformCheck 54 / StackListCheck 30 / PrivCodecCheck 30 /
+  DumpParseCheck 14 / LrcCheck 15 / TrustedFlagsCheck 10 = **153 项**。
+- QuickbarCheck 需现生成 R（R.java 由 aapt2 产出），本批次未改其面，
+  沿用旧结果。
+
+### 复盘
+
+- 做对：解析器类 bug（StackScan/TaskScan/PrivCodec）全部写进自检，下一轮
+  改口径先跑自检再上设备。
+- 做错：`Caps.exec` 的超时方案第一版直接在 `Exec` 里写 `linux.os.Process`，
+  被 `import android.os.Process` 遮蔽编译失败四次才看出——**本文件顶部已有
+  `android.os.Process` import，写 `java.lang.Process` 必须写全限定名**。
+- 决策：MOVE/REMOVE 的 uid 校验放在 RootMain（守护进程侧）而不是 RootOps
+  （应用侧）：应用侧可被 hook，守护进程是唯一可信边界。

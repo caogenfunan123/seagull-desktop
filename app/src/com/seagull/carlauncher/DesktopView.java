@@ -708,21 +708,28 @@ public class DesktopView extends FrameLayout {
                     Object tag = t.getTag();
                     if (tag != null && !tag.equals(src)) {
                         String dst = tag.toString();
+                        LauncherModel m = model();
+                        // 落到文件夹上 → 并入。
+                        // 旧实现按文件夹名 splits 手工定位，并发两次列表变更是
+                        // 常见路径（拖到 A 文件夹，名字相同就串），统一走
+                        // model.addToFolder / mergeInto 这两个有 save 与
+                        // folderOf 迁移处理的入口；同时判掉 m == null（Activity 已销毁）。
+                        if (m == null) return;
                         if (dst.startsWith("@folder:")) {
-                            // 落到文件夹上 → 并入
-                            String[] parts = dst.split(":");
-                            LauncherModel m = model();
+                            String fname = dst.substring("@folder:".length());
                             LauncherModel.Folder f = null;
-                            for (LauncherModel.Folder x : m.folders) if (x.name.equals(parts[1])) { f = x; break; }
-                            if (f != null && !f.keys.contains(src)) {
-                                f.keys.add(src);
-                                m.pinned.remove(src);
-                                m.save();
-                                host.onToast("已加入「" + f.name + "」");
-                                refresh();
+                            for (LauncherModel.Folder x : m.folders) {
+                                if (x.name.equals(fname)) { f = x; break; }
                             }
+                            if (f == null) return;
+                            if (f.keys.contains(src)) return;
+                            m.addToFolder(f, src);
+                            m.pinned.remove(src);
+                            m.save();
+                            host.onToast("已加入「" + f.name + "」");
+                            refresh();
                         } else {
-                            LauncherModel.Folder f = model().mergeInto(dst, src);
+                            LauncherModel.Folder f = m.mergeInto(dst, src);
                             if (f != null) {
                                 host.onToast("已合并为文件夹，可点进去改名");
                                 refresh();

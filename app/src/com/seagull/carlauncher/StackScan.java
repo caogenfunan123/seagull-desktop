@@ -44,11 +44,19 @@ public final class StackScan {
         StringBuilder sb = new StringBuilder();
         for (String line : out.split("\n")) {
             String t = line.trim();
-            if (t.startsWith("displayId=") && t.length() > 10 && isDigits(t.substring(10))) {
-                if (cur >= 0) map.put(cur, sb.toString());
-                cur = Integer.parseInt(t.substring(10));
-                sb.setLength(0);
-            } else if (cur >= 0) {
+            // 段头容错：有些 ROM 的 displayId= 行带尾随内容（"displayId=0 stacks=2"、
+            // "displayId=0 (default)"），整段 isDigits 会一个段都切不出来 →
+            // 自愈静默失效。改成前缀 + 取前导整数。
+            if (t.startsWith("displayId=")) {
+                int id = leadingInt(t, 10);
+                if (id >= 0) {
+                    if (cur >= 0) map.put(cur, sb.toString());
+                    cur = id;
+                    sb.setLength(0);
+                    continue;
+                }
+            }
+            if (cur >= 0) {
                 sb.append(line).append('\n');
             }
         }
@@ -56,10 +64,18 @@ public final class StackScan {
         return map;
     }
 
+    /** 从 off 起取前导十进制整数，没有则 -1。 */
+    private static int leadingInt(String s, int off) {
+        int i = off, end = i;
+        while (end < s.length() && Character.isDigit(s.charAt(end))) end++;
+        if (end == i) return -1;
+        try { return Integer.parseInt(s.substring(i, end)); } catch (Throwable t) { return -1; }
+    }
+
     /** 目标包是否在指定屏上（任务描述/topActivity 任意位置含包名）。 */
     public static boolean isRunningOnDisplay(String out, String pkg, int displayId) {
         String seg = segments(out).get(displayId);
-        return seg != null && pkg != null && !pkg.isEmpty() && seg.contains(pkg);
+        return segHasPkg(seg, pkg);
     }
 
     /**
@@ -88,7 +104,7 @@ public final class StackScan {
             int from = starts.get(s)[2];
             int to = (s + 1 < starts.size()) ? starts.get(s + 1)[2] : lines.size();
             for (int i = from; i < to; i++) {
-                if (lines.get(i).contains(pkg)) {
+                if (lineHasPkg(lines.get(i), pkg)) {
                     hit = new TaskRef(starts.get(s)[1], starts.get(s)[0]);
                     break;
                 }
@@ -132,12 +148,36 @@ public final class StackScan {
         }
     }
 
-    private static boolean isDigits(String s) {
-        if (s == null || s.isEmpty()) return false;
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (c < '0' || c > '9') return false;
+    /**
+     * 段内是否含目标包的任务（行级边界匹配）。
+     * 【坑】不能用整段 contains(pkg)：com.foo 会命中 com.foobar 的段，
+     * 于是"目标已在虚拟屏"被误判、该搬回的任务不搬（批次 P 修）。
+     */
+    private static boolean segHasPkg(String seg, String pkg) {
+        if (seg == null || pkg == null || pkg.isEmpty()) return false;
+        for (String line : seg.split("\n")) {
+            if (lineHasPkg(line, pkg)) return true;
         }
-        return true;
+        return false;
+    }
+
+    /** 行内含包名边界：包名后必须是字符串结尾或非包名字符。 */
+    static boolean lineHasPkg(String line, String pkg) {
+        if (line == null || pkg == null || pkg.isEmpty()) return false;
+        int from = 0;
+        while (true) {
+            int i = line.indexOf(pkg, from);
+            if (i < 0) return false;
+            boolean leftOk = i == 0 || !isPkgChar(line.charAt(i - 1));
+            int after = i + pkg.length();
+            boolean rightOk = after >= line.length() || !isPkgChar(line.charAt(after));
+            if (leftOk && rightOk) return true;
+            from = i + 1;
+        }
+    }
+
+    private static boolean isPkgChar(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                || (c >= '0' && c <= '9') || c == '_' || c == '.';
     }
 }

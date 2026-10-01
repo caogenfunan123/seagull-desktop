@@ -996,8 +996,15 @@ public class SettingsSectionActivity extends BaseActivity {
             runOnUiThread(() -> {
                 if (f == null || !f.isFile()) { msgDialog("下载失败", e); return; }
                 try {
+                    // content:// + FileProvider：targetSdk 24 起 Uri.fromFile()
+                    // 直接 FileUriExposedException（旧实现就是这样，装新版本必崩）
+                    android.net.Uri u = SeagullFileProvider.uriFor(SettingsSectionActivity.this, f);
+                    if (u == null) {
+                        msgDialog("装不上", "拿不到 " + f.getAbsolutePath() + " 的分享地址");
+                        return;
+                    }
                     Intent i = new Intent(Intent.ACTION_VIEW);
-                    i.setDataAndType(android.net.Uri.fromFile(f), "application/vnd.android.package-archive");
+                    i.setDataAndType(u, "application/vnd.android.package-archive");
                     i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
                     startActivity(i);
                 } catch (Throwable t2) {

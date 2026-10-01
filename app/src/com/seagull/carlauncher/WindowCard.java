@@ -1,6 +1,7 @@
 package com.seagull.carlauncher;
 
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
@@ -207,10 +208,18 @@ public final class WindowCard {
     }
 
     public void close() {
+        // 由 WindowService.onDestroy / 重复建卡时调：卡片一关，前台服务也没有
+        // 画面可守，顺手停掉自己（旧实现从不 stopService，通知+服务常驻到进程死）
         ui.post(() -> {
             detach();
             try { wm.removeView(root); } catch (Throwable ignore) {}
             try { projection.stop(); } catch (Throwable ignore) {}
+            try {
+                if (root != null && root.getContext() != null) {
+                    root.getContext().stopService(
+                            new Intent(root.getContext(), WindowService.class));
+                }
+            } catch (Throwable ignore) {}
         });
     }
 }

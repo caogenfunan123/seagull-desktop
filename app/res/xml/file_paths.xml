@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 的目录映射：只暴露应用自己的 files/ 目录。
+  场景：「下载新版本」把 APK 下到 getFilesDir() 后装。
+  targetSdk 33 下 Uri.fromFile() 会直接 FileUriExposedException 崩掉，
+  安装 intent 必须走 content:// + FileProvider。
+-->
+<paths>
+    <files-path name="updates" path="." />
+</paths>

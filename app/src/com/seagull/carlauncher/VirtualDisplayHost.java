@@ -49,15 +49,20 @@ public final class VirtualDisplayHost {
         try {
             DisplayManager dm = (DisplayManager) ctx.getSystemService(Context.DISPLAY_SERVICE);
             // WITHOUT surface：虚拟屏自己持有内容，这样启动进去的应用才画得出来。
-            // flags 与 MirrorSlot 保持一致（PUBLIC|AUTO_MIRROR）：OWN_CONTENT_ONLY
-            // 只显示同 UID 内容，第三方应用 task 上来了画面也是黑的（批次 J 实测根因）。
+            // flags 与 MirrorSlot 现策略对齐：不加减 AUTO_MIRROR —— 任务没落屏时
+            // AUTO_MIRROR 会把手机桌面镜像进画中画，排障结论被带偏（批次 J 实测坑）。
+            // OWN_CONTENT_ONLY 也不行：第三方应用 task 上来了画面也是黑的。
             vd = dm.createVirtualDisplay("seagull-vd", w, h, dpi, (Surface) null,
-                    DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
-                            | DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR);
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC);
             if (vd == null) {
                 return new R(false, "createVirtualDisplay 返回 null（权限或资源被拒）");
             }
-            displayId = vd.getDisplay().getDisplayId();
+            displayId = vd.getDisplay() != null ? vd.getDisplay().getDisplayId() : -1;
+            if (displayId < 0) {
+                vd.release();
+                vd = null;
+                return new R(false, "createVirtualDisplay 后拿不到 display（设备未就绪）");
+            }
             Log.i(TAG, "虚拟屏已建 id=" + displayId + " " + w + "x" + h + "@" + dpi);
             return new R(true, "虚拟屏 id=" + displayId + "  " + w + "x" + h + "@" + dpi);
         } catch (Throwable t) {

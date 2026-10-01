@@ -97,7 +97,7 @@ public final class Lyrics {
 
     /** 给任意展示方取当前窗口（0=自动行数）。10.15 卡片与菜园共用这一个出口。 */
     public static String[] window(Context ctx, int wantLines) {
-        return window(ctx, new LauncherModel(ctx), wantLines);
+        return window(ctx, new LauncherModel(ctx, false), wantLines);
     }
 
     /** 每秒跳一次的地方只 new 一次模型（读存档要解 JSON，一秒三次太浪费）。 */
@@ -194,7 +194,7 @@ public final class Lyrics {
         }
         lastTick = now;
 
-        LauncherModel m = new LauncherModel(ctx);
+        LauncherModel m = new LauncherModel(ctx, false);
         String k = (a + "|" + t).toLowerCase(Locale.ROOT);
         if (!t.equals(title) || !a.equals(artist)) {
             title = t; artist = a; key = k;
@@ -222,7 +222,7 @@ public final class Lyrics {
     /* ==================== 取歌词 ==================== */
 
     private static void lookup(final Context ctx, final String k) {
-        final LauncherModel m = new LauncherModel(ctx);
+        final LauncherModel m = new LauncherModel(ctx, false);
         final String t = title, a = artist;
         POOL.execute(new Runnable() {
             @Override public void run() {
@@ -243,7 +243,7 @@ public final class Lyrics {
                         @Override public void run() {
                             cur_lyric = text == null ? Lrc.EMPTY : Lrc.parse(text);
                             cur = -1;
-                            advance(new LauncherModel(ctx));
+                            advance(new LauncherModel(ctx, false));
                         }
                     });
                 } catch (Throwable e) {

@@ -43,12 +43,18 @@ public class WindowService extends Service {
             if (mp != null) {
                 int w = getResources().getDisplayMetrics().widthPixels;
                 int h = getResources().getDisplayMetrics().heightPixels;
+                // 重复 START_CARD 先关旧卡：否则旧 WindowCard 的悬浮窗/虚拟屏/
+                // MediaProjection 永不释放（旧实例 close 永远不会被调）
+                if (card != null) { card.close(); card = null; }
                 // 卡片按 16:9 左右的初始高度，虚拟屏尺寸跟随卡片布局
                 card = new WindowCard(this, mp, w, h);
                 card.show();
                 Log.i(TAG, "卡片已启动");
             } else {
                 Log.w(TAG, "没有 MediaProjection，无法建卡片");
+                // 前台服务没画面可守，停掉自己，别留个空转通知
+                stopForegroundCompat();
+                stopSelf();
             }
         }
         return START_NOT_STICKY;
@@ -82,6 +88,18 @@ public class WindowService extends Service {
             }
         } catch (Throwable t) {
             Log.e(TAG, "startForeground 失败", t);
+        }
+    }
+
+    private void stopForegroundCompat() {
+        try {
+            if (Build.VERSION.SDK_INT >= 24) {
+                stopForeground(STOP_FOREGROUND_REMOVE);
+            } else {
+                stopForeground(true);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "stopForeground 失败", t);
         }
     }
 

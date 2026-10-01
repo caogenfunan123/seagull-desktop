@@ -58,15 +58,17 @@ public final class Weather {
 
     private static final Runnable TICK = new Runnable() {
         @Override public void run() {
-            armed = false;
+            armed = false;   // 本轮开始；arm() 会重新上锁并排下一轮
             Context ctx = sCtx;
             if (ctx == null) return;
-            LauncherModel m = new LauncherModel(ctx);
-            if (!m.weatherAuto) return;
+            LauncherModel m = new LauncherModel(ctx, false);
+            if (!m.weatherAuto) return;   // 关了就停摆；arm() 在设置打开时被再次调用
             if (System.currentTimeMillis() - m.weatherUpdatedAt >= INTERVAL - 60_000L) {
                 refresh(ctx, m, null);
             }
-            arm(ctx);                 // 排下一轮
+            // 上面 return 的两条路径都会把 armed 留在 true：没有这一句，
+            // 20 分钟链在这里断掉，天气再也不会自动刷新（只有重启桌面才续上）
+            if (!armed) arm(ctx);
         }
     };
 

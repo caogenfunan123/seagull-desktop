@@ -131,7 +131,10 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         }
         Weather.arm(this);          // 20 分钟一次；数据过期时立刻取
         Lyrics.start(this);         // 一秒一跳，组件条/菜园的歌词都从它出
-        Lyrics.addSink(islandSink);
+        Lyrics.removeSink(islandSink);
+        Lyrics.addSink(islandSink); // sink 恒为同一实例：CopyOnWrite 集合会永久持死
+        // 整个 HomeActivity，复用而非追加（旧实现无 remove，每次 onResume
+        // push 一次 = 每回一次桌面多跑一遍 bind + 保活一整个 Activity）
         refreshMini();              // 媒体条跟着会话状态走（没会话整条隐藏）
         // 常驻画中画被系统拉回主屏时搬回去（批次 L；节流在 MirrorHost 里）
         MirrorHost.healHome(this);
@@ -142,6 +145,8 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
     /** 岛上的歌词一秒一跳。 */
     private final Lyrics.Sink islandSink = new Lyrics.Sink() {
         @Override public void onLyric(String[] w, String t, String a) {
+            // 展示方（HomeActivity/岛）可能已被销毁：拿不住就别硬塞
+            if (isFinishing() || isDestroyed()) return;
             if (model != null && model.islandLyric && island != null) island.bind(model);
         }
     };
@@ -158,6 +163,7 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
     @Override protected void onDestroy() {
         ui.removeCallbacksAndMessages(null);
         if (pip != null) pip.onDestroy();   // 只断 Surface，VD 留给 MirrorHost 常驻
+        Lyrics.removeSink(islandSink);      // sink 保活纪律：Activity 走了一定摘掉
         super.onDestroy();
     }
 
@@ -481,7 +487,8 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
 
     @Override public void onUserLeaveHint() {
         super.onUserLeaveHint();
-        if (prefs != null && prefs.getBoolean("autoPip", false)) enterPip(null);
+        // 旧实现读 prefs 里一个从未写入的 "autoPip"（永远 false），死代码。
+        // 画中画切换走 pipMode + PipBoard，不借系统画中画。
     }
 
     /* ------------------------- 兼容静态 API ------------------------- */

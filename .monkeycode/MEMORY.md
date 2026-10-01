@@ -99,3 +99,25 @@ Entries discovered by the Agent during task execution should follow this format:
   - am start --display 搬屏前必须 am force-stop <pkg>（已知坑 #5 的执行）：否则 singleTask 应用复用主屏老栈，画中画黑屏且主屏被应用盖住
   - 应用在小尺寸/怪宽高比虚拟屏 letterbox（按手机尺寸渲染居中留黑边）：root am compat enable FORCE_RESIZE_APP <pkg> + am compat enable NEVER_FIX_ORIENTATION <pkg>，清槽时 am compat reset
   - ensureOnDisplay（守护进程 moveRootTaskToDisplay 把落在主屏的目标搬回虚拟屏）除了 onResume 要加进 30s tick 周期跑
+
+[User Instruction Summary]
+- Date: 2026-10-01
+- Context: User asked "帮我全部代码复盘三次找bug"（批次 P）
+- Instructions:
+  - 复盘分三轮执行：并行分组精读 → 亲自复核 → 自检/交叉验证；不在每轮重复同一视角
+  - 只有确凿的 bug（读代码推出）才修，猜的不修；修复排序：崩溃 → 数据丢失 → 红线 → 泄漏 → 健壮性
+  - 非平凡逻辑（解析器/编解码/坐标变换）必须有纯 JVM 自检钉住，跑法写进 java 头注释
+
+[Project Knowledge Summary]
+- Date: 2026-10-01
+- Context: Discovered by Agent while doing batch P three-pass review of app/src
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - `dumpsys activity activities` 的段头真实形态带尾随内容（`displayId=0 stacks=2`）：解析只能取前缀 leadingInt 再转 int，绝不用 split 下标；同一 display 会以多种形态出现多次，后者不得覆盖前者
+  - 包名匹配必须按边界匹配（com.foo 不能撞 com.foobar），解析器判"应用在哪个屏"误判的代价是 ensureOnDisplay 反复 force-stop 用户应用
+  - `am start` 的成功判据必须是正向证据：含 `Starting` 且无 `Warning`/`Abort`；`Warning: Activity not started...` 不含 Error/Exception 字样
+  - su 卡住（KernelSU 授权弹窗没人点）会让无超时的 Caps.exec 钉死调用线程：主线程=ANR，后台=线程池耗尽；所有 root 执行统一走 3s 超时 + destroyForcibly
+  - 本项目文件顶部 import 了 android.os.Process，写 java.lang.Process 必须全限定名，直接 Process 会被遮蔽（编译错四次）
+  - 每秒一跳的 tick（歌词/天气）读配置必须用 LauncherModel(ctx, false) 只读存档：全量构造跑 loadApps 会对每个已装应用做一次 loadLabel IPC
+  - targetSdk 24+ 发安装 intent 必须走 content:// URI：本项目无 androidx，自绘 SeagullFileProvider（files/ 内路径 canonical 化防穿越）即可
+  - 本地验证三件套：bash /tmp/opencode/typecheck.sh（javac 全量）；自检 javac -cp android.jar 后 java -ea 逐个跑（TransformCheck/StackListCheck/PrivCodecCheck/DumpParseCheck/LrcCheck/TrustedFlagsCheck，批次 P 共 153 项）；APK 构建在 CI（.github/workflows/build-apk.yml），本地不签

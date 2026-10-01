@@ -56,6 +56,7 @@ public class MediaListenerService extends NotificationListenerService {
 
     @Override public void onListenerDisconnected() {
         connected = false;
+        unregisterCurrent();   // 直接置 null 会留下挂在 controller 上的回调，重连后重复注册
         current = null;
         snap = new Snap();
         super.onListenerDisconnected();
@@ -130,8 +131,12 @@ public class MediaListenerService extends NotificationListenerService {
         @Override public void onPlaybackStateChanged(PlaybackState state) { readCurrent(); }
         @Override public void onMetadataChanged(MediaMetadata metadata) { readCurrent(); }
         @Override public void onSessionDestroyed() {
+            // 必须校验销毁的就是 current：A 会话在 B 上位后才销毁时，旧实现会把
+            // B 的控制柄一起清空 → 媒体条直接失灵。先反注册再置空。
+            unregisterCurrent();
             current = null;
             snap = new Snap();
+            Log.i(TAG, "当前会话已销毁，清空媒体条");
         }
     };
 

@@ -39,7 +39,7 @@ public class BallService extends Service {
     @Override public void onCreate() {
         super.onCreate();
         wm = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
-        model = new LauncherModel(this);
+        model = new LauncherModel(this, false);
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -66,8 +66,15 @@ public class BallService extends Service {
                         | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT);
         lp.gravity = Gravity.TOP | Gravity.START;
-        lp.x = model.ballX < 0 ? dp(16) : model.ballX;
-        lp.y = model.ballY < 0 ? screenH() - size - dp(32) : model.ballY;
+        // 上次的位置可能是换机前/横竖屏切换前/改字号后写下的：FLAG_LAYOUT_NO_LIMITS
+        // 会把"越界的 x/y"直接渲染到屏幕外（用户看不到球，以为服务挂了）。
+        // 旧实现只在 <0 时给默认值，>屏幕宽/高的脏值原样用。
+        int x = model.ballX < 0 ? dp(16) : model.ballX;
+        int y = model.ballY < 0 ? screenH() - size - dp(32) : model.ballY;
+        int sw = screenW(), sh = screenH();
+        x = Math.max(0, Math.min(x, Math.max(0, sw - size)));
+        y = Math.max(0, Math.min(y, Math.max(0, sh - size)));
+        lp.x = x; lp.y = y;
         ball.setTag(lp);
         try {
             wm.addView(ball, lp);
@@ -126,7 +133,12 @@ public class BallService extends Service {
     }
 
     private final Runnable longPressRun = new Runnable() {
-        @Override public void run() { startActivity(new Intent(BallService.this, GardenActivity.class)); }
+        @Override public void run() {
+            // 长按服务上下文起 Activity 必须带 NEW_TASK，否则 AndroidRuntimeException
+            // （Service 不是 Activity context）。tap() 那条路径带过，这条漏了。
+            startActivity(new Intent(BallService.this, GardenActivity.class)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        }
     };
 
     private void tap() {
@@ -148,6 +160,9 @@ public class BallService extends Service {
                 ? dp(4) : getResources().getDisplayMetrics().widthPixels - size - dp(4);
         lp.y = Math.max(0, Math.min(lp.y, screenH() - size));
         try { wm.updateViewLayout(ball, lp); } catch (Throwable ignore) {}
+        // model 是 onCreate 时的快照，直接 save 会把用户此后在设置页改的主题/Dock
+        // 全部静默回滚。存之前先重读档，只动球坐标这两个字段。
+        model.load();
         model.ballX = lp.x;
         model.ballY = lp.y;
         model.save();
@@ -163,11 +178,17 @@ public class BallService extends Service {
         return getResources().getDisplayMetrics().heightPixels;
     }
 
+    private int screenW() {
+        return getResources().getDisplayMetrics().widthPixels;
+    }
+
     private int dp(float v) {
         return Math.round(v * getResources().getDisplayMetrics().density);
     }
 
     @Override public void onDestroy() {
+        // 长按 Runnable 只在 UP/CANCEL 时摘；销毁时补一次，否则球已 remove 还会弹菜园
+        if (ball != null) ball.removeCallbacks(longPressRun);
         if (ball != null) {
             try { wm.removeView(ball); } catch (Throwable ignore) {}
             ball = null;

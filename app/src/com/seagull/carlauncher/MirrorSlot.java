@@ -51,10 +51,19 @@ public final class MirrorSlot implements CanvasSource {
     /** 触摸转发交给 TouchForward（跟手/防误滑/长按/排障都在里面）。 */
     private TouchForward touch;
 
+    /**
+     * 懒初始化必须双检加锁：部署后台线程（deploy）与触摸主线程（onTouch）两条
+     * 路径都会首触，无锁时两线程各 new 一个 TouchForward → 各起一个
+     * HandlerThread，被覆盖的那个永远 shutdown 不到（线程泄漏）。
+     */
     private TouchForward touchFor() {
         if (touch == null) {
-            LauncherModel m = new LauncherModel(ctx);
-            touch = new TouchForward(m.touchThreshold, m.longPressMs, m.touchFollow);
+            synchronized (this) {
+                if (touch == null) {
+                    LauncherModel m = new LauncherModel(ctx, false);
+                    touch = new TouchForward(m.touchThreshold, m.longPressMs, m.touchFollow);
+                }
+            }
         }
         return touch;
     }

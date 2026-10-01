@@ -9,6 +9,8 @@ package com.seagull.carlauncher;
  */
 public class StackListCheck {
 
+    private static int n = 0;
+
     // 现场取材：网易云在主屏（task 25）和虚拟屏（task 31）各有一个任务
     private static final String OUT =
             "Stack id=1\n" +
@@ -32,6 +34,20 @@ public class StackListCheck {
             "displayId=2\n" +
             "  taskId=9 com.foo.bar\n";
 
+    // 批次 P 补：段头带尾随内容的真实 ROM 形态（一台设备同一 display 只出现一次）
+    private static final String TAIL =
+            "displayId=0 stacks=2 (default)\n" +
+            "  taskId=25 com.netease.cloudmusic\n" +
+            "    topActivity=ComponentInfo{com.netease.cloudmusic/.MainActivity}\n" +
+            "displayId=2\n" +
+            "  taskId=31 com.netease.cloudmusic\n";
+
+    // 批次 P 补：包名前缀碰撞（com.foo 与 com.foobar）
+    private static final String PREFIX =
+            "displayId=0\n" +
+            "  taskId=25 com.foobar\n" +
+            "    topActivity=ComponentInfo{com.foobar/.Main}\n";
+
     public static void main(String[] args) {
         // 1) 分段：两段，各含各的 task
         java.util.Map<Integer, String> seg = StackScan.segments(OUT);
@@ -40,6 +56,18 @@ public class StackListCheck {
         check(StackScan.isRunningOnDisplay(OUT, "com.netease.cloudmusic", 2), "display2 有网易云");
         check(!StackScan.isRunningOnDisplay(OUT, "com.android.launcher", 2), "display2 没有 launcher");
         check(!StackScan.isRunningOnDisplay(OUT, "com.not.here", 0), "没装的包判否");
+
+        // 1b) 包名前缀碰撞：com.foo 不能命中 com.foobar 的段
+        check(StackScan.segments(PREFIX).containsKey(0), "前缀样本成段");
+        check(!StackScan.isRunningOnDisplay(PREFIX, "com.foo", 0), "com.foo 不命中 com.foobar");
+        check(StackScan.isRunningOnDisplay(PREFIX, "com.foobar", 0), "com.foobar 命中自己");
+        check(StackScan.findTaskOnDisplay(PREFIX, "com.foo", 0) == null, "前缀包找不到 task");
+        check(!StackScan.lineHasPkg("topActivity=ComponentInfo{com.foo.bar/.A}", "com.foo"),
+                "行内前缀不命中");
+        check(StackScan.lineHasPkg("topActivity=ComponentInfo{com.foo/.A}", "com.foo"),
+                "行内精确命中");
+        check(StackScan.lineHasPkg("pkg=com.foo flags=1", "com.foo"), "行尾边界命中");
+        check(!StackScan.lineHasPkg("pkg=com.foobar.", "com.foo"), "行尾后跟字符不命中");
 
         // 2) 找任务：主屏取 25/stack1，虚拟屏取 31/stack7
         StackScan.TaskRef a = StackScan.findTaskOnDisplay(OUT, "com.netease.cloudmusic", 0);
@@ -59,18 +87,28 @@ public class StackListCheck {
         StackScan.TaskRef fb = StackScan.findTaskOnDisplay(BARE, "com.foo.bar", 0);
         check(fb != null && fb.taskId == 8 && fb.stackId == -1, "极简输出 task=8 stack=-1");
 
-        // 5) 空输入的兜底
+        // 5) 段头带尾随内容的真实 ROM 形态（旧实现整段 isDigits 会切不出段，
+        //    自愈静默失效——批次 P 修）
+        check(StackScan.segments(TAIL).containsKey(0), "尾随内容仍成段");
+        check(StackScan.segments(TAIL).keySet().size() == 2, "尾随形态两段 0/2");
+        check(StackScan.isRunningOnDisplay(TAIL, "com.netease.cloudmusic", 0), "尾随形态判运行中");
+        StackScan.TaskRef ft = StackScan.findTaskOnDisplay(TAIL, "com.netease.cloudmusic", 0);
+        check(ft != null && ft.taskId == 25, "尾随形态取到 task=25");
+
+        // 6) 空输入的兜底
         check(StackScan.segments(null).isEmpty(), "null -> 空段");
         check(StackScan.segments("").isEmpty(), "空串 -> 空段");
         check(StackScan.segments("displayId=0\n  mSomething=1\n").containsKey(0), "只有段头也成段");
+        check(StackScan.segments("displayId=abc\n").isEmpty(), "段头不是数字 -> 不成段");
         check(!StackScan.isRunningOnDisplay("displayId=0\n", "com.foo", 0), "空段判否");
         check(StackScan.firstTaskOnDisplay("displayId=5\n  stackId=1\n  taskId=abc\n", 5) == null,
                 "taskId= 后面不是数字 -> 跳过");
 
-        System.out.println("StackListCheck OK (" + 12 + " 项)");
+        System.out.println("StackListCheck OK (" + n + " 项)");
     }
 
     private static void check(boolean ok, String what) {
+        n++;
         if (!ok) throw new AssertionError("失败：" + what);
     }
 }

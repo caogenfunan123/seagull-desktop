@@ -471,3 +471,16 @@
 | 代码量 | 9 个业务类 / 3340 行（反编译） | 26 类 / 4585 行 | 相当 |
 
 > **注**：原始 APK 只有 533 KB，业务代码仅 9 个类 3340 行 —— 因为它的窗口管理全靠系统 API，UI 高度复用一套自定义 View。功能多不等于代码多。
+
+### 批次 P 复盘加固（无新功能行，全是已知行的健壮性补钉）
+
+| 编号 | 项目 | 状态 | 说明 |
+|---|---|---|---|
+| P1 | 崩溃根治（3 处） | ✅ | BallService 长按 NEW_TASK / VirtualDisplayActivity host.attach / 安装 intent 改 `SeagullFileProvider`（`Uri.fromFile` targetSdk 24+ 必崩） |
+| P2 | 自愈解析器 | ✅ | StackScan 段头容错 + 包名边界匹配（`displayId=0 stacks=2` 尾随内容曾把 segOf 打成 -1，导致 ensureOnDisplay 误 force-stop 用户应用）；TaskMover frontTask 两种 taskId 形态 |
+| P3 | am start 正向判定 | ✅ | 必须含 `Starting` 且无 `Warning`/`Abort`（`Warning: Activity not started` 曾被当作成功 → 不触发自愈） |
+| P4 | root 通道超时 | ✅ | `Caps.exec` 3s 超时 + destroyForcibly + 输出 256KB 上限（KernelSU 弹窗没人点 = ANR） |
+| P5 | 守护进程鉴权 | ✅ | RootMain peer uid 只放行 root/system/shell + 单行 64KB 上限（原来任意应用可连私有 socket 拉起虚拟屏/注入触摸） |
+| P6 | 配置读取性能 | ✅ | `LauncherModel(ctx, false)` 只读存档重载，歌词/天气/悬浮球/触摸阈值 tick 不再跑全量 loadApps（每应用一次 loadLabel IPC） |
+| P7 | 恢复出厂完整性 | ✅ | `resetScalars()` 补齐标量（字号/透明/外观/歌词/天气/分割权重此前不重置） |
+| P8 | 自检覆盖 | ✅ | TransformCheck 54 / StackListCheck 30 / PrivCodecCheck 30 / DumpParseCheck 14 / LrcCheck 15 / TrustedFlagsCheck 10 = 153 项全过 |

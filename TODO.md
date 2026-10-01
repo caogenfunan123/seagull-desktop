@@ -228,6 +228,32 @@
 - [x] **应用跳主屏**：`launchOnDisplay` 从未 force-stop（已知坑 #5），`am start` 对已在运行应用静默投递主屏实例 → 部署前先 `am force-stop`；`selfHeal()`（目标在主屏用守护进程 moveRootTaskToDisplay 搬回）加进 30s tick 周期跑
 - [ ] 用户验收：空画布点大按钮弹选择器、长按已选画布换应用；高德铺满画布（无黑边）；应用不再跳到手机主屏；若有残留回传 logcat（SeagullPipBoard 焦点切换 / SeagullRootOps ensureOnDisplay / am compat 日志）
 
+### P2-10 批次 P 三轮复盘修复 🟡 代码已写，typecheck + 153 项自检通过，推送待发
+用户原话："帮我全部代码复盘三次找bug"。三轮：并行分组精读 → 亲自复核 → 自检/交叉验证。确凿 bug 分级修（崩溃 → 数据丢失 → 红线 → 泄漏 → 健壮性）：
+- [x] **P0 崩溃 ①** `BallService.longPressRun` 无 `FLAG_ACTIVITY_NEW_TASK`：从 Service 上下文起 Activity 秒崩（Android 12+ 更严），onDestroy 补 removeCallbacks；`snap()` 前先 `model.load()` 修快照回写覆盖新配置
+- [x] **P0 崩溃 ②** `VirtualDisplayActivity` onCreate 没 `host.attach(this)`：回调里拿宿主=null；su 探测移后台线程；`append` 改 synchronized + 回主线程 setText
+- [x] **P0 崩溃 ③** `Uri.fromFile()` 发安装 intent（targetSdk 24+ = FileUriExposedException）：纯 SDK 自绘 `SeagullFileProvider`（manifest + res/xml/file_paths.xml，零依赖不引 androidx）
+- [x] **VD 故障态** `VirtualDisplayHost.create` 传 AUTO_MIRROR（设备分身屏）→ 去掉；displayId 取不到时 release 再返回
+- [x] **焦点状态错乱** `PipBoard.switchFocus` 未撤销来源槽的 armed/longFired（切换后旧槽继续吞手势）；`requestConsent` 去重 + su 探测移后台；`pollToken` 覆盖前 stop 旧 projection；onDestroy `ui.removeCallbacksAndMessages(null)`
+- [x] **am start 误判成功** `RootOps.launchOnDisplay` 只判 "无 Error"：`Warning: Activity not started...` 既无 Error 也无 Exception 会把"没起来"当成功 → 要求正向 `Starting` 且无 Warning/Abort；包名/组件名经 `safeComponent` 白名单才进命令
+- [x] **触摸变换方向反了** `TouchTransformer.scaling` 注释说 dst→src，代码算的 src→dst（VD 模式会放大而非裁切）→ 纠正为 src/dst 并更新文档；`TransformCheck` 重写为 54 项（方向往返断言钉死）
+- [x] **解析器漏任务 = 自愈失效** `StackScan` 同一 display 被 `displayId=0 stacks=2` 尾随内容覆盖成 -1（taskOnDisplay 全判"不在"→ 反复 force-stop 停掉用户应用）→ `leadingInt` 段头容错 + `lineHasPkg/segHasPkg` 包名边界匹配（com.foo 不再撞 com.foobar）；`TaskScan` 同源改边界匹配；`StackListCheck` 重写 30 项
+- [x] **TaskMover.frontTask 找不到任务**：正则只认 `taskId=`，真实 dump 是 `Task{#42}` → 两种都认
+- [x] **热区互抢** MiniPlayer 三按钮共用 TouchDelegate：第三个 expandHotZone 把前两个的有效区顶掉 → `MultiDelegate` 合派 + `installHotZone()` 钳回行边界（行外 1px 属于画布/底栏，不抢）
+- [x] **会话泄漏** `MediaListenerService`：onSessionDestroyed/onListenerDisconnected 先 `unregisterCurrent()`；`HomeActivity` sink 恒单例 + onDestroy `removeSink`（旧实现每次 onResume push 一整个 Activity）
+- [x] **主线程枚举应用** 每秒 tick 读配置时 `new LauncherModel(ctx)` 跑全量 `loadApps()`（每应用一次 loadLabel IPC）：新增 `LauncherModel(ctx, false)` 只读存档重载，歌词/天气/悬浮球/触摸阈值/pinStatic 之外全部切过去
+- [x] **天气链断** Weather TICK 在 weatherAuto=false 或 ctx==null 早退时 armed 留在 true → 20 分钟链断掉，桌面不重启再也不刷新
+- [x] **窗口卡片泄漏** WindowService 重复 START_CARD 不关旧卡（悬浮窗/VD/投影全泄漏）；无 projection 时空转前台服务常驻 → close 时 stopService；WindowCard.close 顺手停服务
+- [x] **LauncherModel 数据脏** widgets 存档 `optInt` 把 JSON null 读成 0（时钟悄悄复活）+ toggleWidget 不校验范围；factoryReset 漏掉全部标量（字号/透明/外观/歌词/天气/分割权重，实测"恢复出厂"后字号还停 130%）→ `resetScalars()` 补齐
+- [x] **悬浮球跑出屏幕** ballX/ballY 恢复时只判 <0，>屏宽的脏值 + FLAG_LAYOUT_NO_LIMITS 直接渲染到屏幕外（用户以为服务挂了）→ 钳回 [0, 屏-球径]
+- [x] **桌面拖文件夹按名定位** DesktopView `dst.split(":")` 找名字相同文件夹会串，且 model() 可能为 null → 走 model.addToFolder/mergeInto，先判空
+- [x] **su 悬挂 = ANR 源** Caps.exec 无超时，KernelSU 弹窗没人点时主线程被钉死 → 3s 超时 + destroyForcibly + 输出 256KB 上限
+- [x] **私有 socket 无鉴权** RootMain 任意 uid 可发指令（拉起虚拟屏/注入触摸的特权通道）→ peer uid 只放行 root/system/shell；单行 64KB 上限，超长行读干再拒
+- [x] **协议脏报文** PrivCodec.split(" ") 吞尾随空串；MOTION 的 count 与实参不匹配时静默只取前几段 → split(-1) + 长度必须严格相等
+- [x] **QuickBar NPE** host.model() 返回 null 时 `m.quickbar.size()` 秒崩 HomeActivity → 返回空 View
+- [x] **自检泄漏** SelfTestMirror 中途 return 不停 mp（前台服务+投影授权活到杀进程）→ safeStop + 正常出口补 mp.stop()；`autoPip` 死代码（prefs 里从未写入此 key）清理
+- [ ] typecheck + 全部自检（153 项）已过；commit/push/CI 轮询、证书核对待做
+
 ---
 
 ## 明确不做

@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Rect;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.TouchDelegate;
 import android.view.View;
 import android.widget.LinearLayout;
@@ -51,7 +52,49 @@ public final class MiniPlayer extends LinearLayout {
         addView(btnPlay);
         addView(btnNext);
 
+        // 三个按钮共用一份热区委托（批次 P 修）：原生 TouchDelegate 一个 View
+        // 只挂一个，逐个 post 会被最后一个覆盖——旧实现只有「下一首」生效。
+        // 注意：热区外扩只能往行内借（按钮已是 -1 高，行外 1px 都属于画布/底栏，
+        // 媒体条抢走画布边缘触摸比盲触难按更糟）。
+        post(this::installHotZone);
+
         setOnClickListener(v -> { if (onInfoClick != null) onInfoClick.run(); });
+    }
+
+    private void installHotZone() {
+        if (btnPrev == null || btnPlay == null || btnNext == null) return;
+        MultiDelegate del = new MultiDelegate();
+        int out = dp(getContext(), 12);
+        for (TextView b : new TextView[]{btnPrev, btnPlay, btnNext}) {
+            Rect r = new Rect();
+            b.getHitRect(r);                 // 坐标空间 = MiniPlayer 自己
+            r.inset(-out, -out);
+            r.intersect(0, 0, getWidth() - 1, getHeight() - 1);   // 不出行边界
+            if (!r.isEmpty()) del.add(r, b);
+        }
+        setTouchDelegate(del);
+    }
+
+    /**
+     * 多目标 TouchDelegate：按命中矩形转发（语义同系统实现——
+     * 事件落点置为目标中心再 dispatch，点按按钮不需要拖拽路径）。
+     */
+    private static final class MultiDelegate extends TouchDelegate {
+        private static final class T { final Rect r; final View v;
+            T(Rect r, View v) { this.r = r; this.v = v; } }
+        private final java.util.List<T> ts = new java.util.ArrayList<>();
+        MultiDelegate() { super(new Rect(), null); }
+        void add(Rect r, View v) { ts.add(new T(r, v)); }
+        @Override public boolean onTouchEvent(MotionEvent e) {
+            int x = (int) e.getX(), y = (int) e.getY();
+            for (T t : ts) {
+                if (t.r.contains(x, y)) {
+                    e.setLocation(t.v.getWidth() / 2f, t.v.getHeight() / 2f);
+                    return t.v.dispatchTouchEvent(e);
+                }
+            }
+            return false;
+        }
     }
 
     private TextView btn(Context ctx, String label, View.OnClickListener l) {
@@ -67,18 +110,7 @@ public final class MiniPlayer extends LinearLayout {
         lp.leftMargin = dp(ctx, 6);
         b.setLayoutParams(lp);
         b.setOnClickListener(l);
-        // 热区外扩 12dp：条只有 36dp 高，按钮触摸目标探出条外
-        post(() -> expandHotZone(b, dp(ctx, 12)));
         return b;
-    }
-
-    private void expandHotZone(View child, int out) {
-        View parent = (View) child.getParent();
-        if (parent == null) return;
-        Rect r = new Rect();
-        child.getHitRect(r);
-        r.inset(-out, -out);
-        parent.setTouchDelegate(new TouchDelegate(r, child));
     }
 
     /** 0=上一首 1=播放/暂停 2=下一首。都直接作用于媒体会话。 */

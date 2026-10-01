@@ -61,22 +61,55 @@ public final class Caps {
         return sRootWho;
     }
 
-    /** 以 root 执行一条命令，返回 stdout（失败返回 null）。 */
+    /**
+     * 以 root 执行一条命令，返回 stdout（失败返回 null）。
+     *
+     * 约定一次执行最多 3 秒、输出最多 4000 行：su 卡住（KernelSU 弹窗没人点、
+     * SELinux 拒连不上 read）时 waitFor()/readLine() 会永久挂起，旧实现直接
+     * 把调用线程钉死；主线程被钉 = ANR，后台线程被钉 = 线程池耗尽。
+     */
     public static String exec(String cmd) {
+        java.lang.Process p = null;
         try {
-            java.lang.Process p = new ProcessBuilder("su", "-c", cmd)
-                    .redirectErrorStream(true).start();
-            BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
-            StringBuilder sb = new StringBuilder();
-            String line;
-            while ((line = r.readLine()) != null) sb.append(line).append('\n');
-            p.waitFor();
-            return sb.toString();
+            p = new ProcessBuilder("su", "-c", cmd).redirectErrorStream(true).start();
+            final java.lang.Process pp = p;
+            java.util.concurrent.Future<String> f = EXEC.submit(() -> {
+                StringBuilder sb = new StringBuilder();
+                String line;
+                try (BufferedReader r = new BufferedReader(
+                        new InputStreamReader(pp.getInputStream()))) {
+                    while ((line = r.readLine()) != null) {
+                        if (sb.length() < 256 * 1024) sb.append(line).append('\n');
+                    }
+                }
+                return sb.toString();
+            });
+            try {
+                String out = f.get(3, java.util.concurrent.TimeUnit.SECONDS);
+                p.waitFor();               // 输出已收干，正常回收
+                return out;
+            } catch (java.util.concurrent.TimeoutException te) {
+                f.cancel(true);
+                Log.w(TAG, "exec 超时: " + cmd);
+                return null;
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                f.cancel(true);
+                return null;
+            }
         } catch (Throwable t) {
             Log.w(TAG, "exec 失败: " + cmd, t);
             return null;
+        } finally {
+            if (p != null) {
+                try { p.destroyForcibly(); } catch (Throwable ignore) {}
+            }
         }
     }
+
+    /** exec 的读输出线程池（超时后被 cancel，随进程回收，无需显式 shutdown）。 */
+    private static final java.util.concurrent.ExecutorService EXEC =
+            java.util.concurrent.Executors.newCachedThreadPool();
 
     /* ---------------- 悬浮窗 ---------------- */
 

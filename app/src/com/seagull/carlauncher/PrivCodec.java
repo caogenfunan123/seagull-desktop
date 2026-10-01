@@ -101,8 +101,12 @@ public final class PrivCodec {
             long seq = Long.parseLong(s.substring(0, sp1));
             String rest = s.substring(sp1 + 1).trim();
             if (rest.isEmpty()) return null;
-            String[] parts = rest.split(" ");
+            // -1 = 保留尾随空串：尾部空格不该吞掉最后一个参数（旧 split(" ")
+            // 把 "1 ping " 切成 ["1","ping"]，尾巴少一段即与发送端约定不符）
+            String[] parts = rest.split(" ", -1);
+            if (parts.length == 0) return null;
             String op = parts[0];
+            if (op.isEmpty()) return null;
             String[] args = new String[parts.length - 1];
             System.arraycopy(parts, 1, args, 0, args.length);
             return new Request(seq, op, args);
@@ -146,7 +150,7 @@ public final class PrivCodec {
             long ev = Long.parseLong(a[3]);
             int count = Integer.parseInt(a[4]);
             if (count <= 0 || count > 16) return null;
-            if (a.length < 5 + count * 2) return null;
+            if (a.length != 5 + count * 2) return null;   // 多给少给都拒绝，别悄悄取前几段
             float[] xs = new float[count];
             float[] ys = new float[count];
             for (int i = 0; i < count; i++) {

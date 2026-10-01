@@ -93,6 +93,8 @@ public final class PipBoard extends LinearLayout {
     private final boolean[] longFired = {false, false, false};
     /** armed[i] = 本手势（从 DOWN 起）发生在这块画布已是焦点的时候，才允许外注入。 */
     private final boolean[] armed = {false, false, false};
+    /** 录屏授权去重标志（两个槽同时需要投影时只弹一次）。 */
+    private boolean consentRequesting = false;
 
     /** 单焦点：只有它能收触摸。初始槽 1。 */
     private int focusSlot = 1;
@@ -148,6 +150,9 @@ public final class PipBoard extends LinearLayout {
 
     /** 退出只断 Surface —— 屏与应用留给 MirrorHost 常驻；没有活跃屏才收 token。 */
     public void onDestroy() {
+        // postDelayed(redeployIfPossible/selfHeal) 必须摘：300ms 内 finish 时它们
+        // 仍会对已销毁 Activity 的 SurfaceView 起后台线程
+        ui.removeCallbacksAndMessages(null);
         if (slotA != null) slotA.detachSurface();
         if (slotB != null) slotB.detachSurface();
         if (MirrorSlot.activeCount() == 0) {
@@ -377,6 +382,10 @@ public final class PipBoard extends LinearLayout {
         int from = focusSlot;
         focusSlot = to;
         Log.i(TAG, "焦点 槽" + from + " → 槽" + to);
+        // 撤掉旧画布的在途手势武装：多指时一指正拖着旧画布，此后它的 MOVE/UP
+        // 必须全部作废（只补 CANCEL 不够，armed 不撤事件照样注进旧 App）。
+        armed[from] = false;
+        longFired[from] = false;
         cancelStroke(slotOf(from));
         applyFocusVisuals(true);
     }
@@ -456,14 +465,25 @@ public final class PipBoard extends LinearLayout {
     /* ------------------------- 授权链 ------------------------- */
 
     public void requestConsent() {
-        RootOps.allowProjectMedia(act);
-        MediaProjectionManager mpm =
-                (MediaProjectionManager) act.getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-        try {
-            act.startActivityForResult(mpm.createScreenCaptureIntent(), REQ_CONSENT);
-        } catch (Throwable t) {
-            Log.w(TAG, "申请录屏失败: " + t);
-        }
+        // 去重：两个槽同时要投影时会连弹两次授权，旧 MediaProjection 被直接覆盖
+        // （不 stop 不反注册回调，录屏会话泄漏到进程结束）
+        if (consentRequesting) { Log.i(TAG, "录屏授权进行中，跳过重复申请"); return; }
+        consentRequesting = true;
+        // allowProjectMedia 是 su 命令（数百 ms），丢后台；startActivityForResult 回主线程
+        new Thread(() -> {
+            RootOps.allowProjectMedia(act);
+            ui.post(() -> {
+                try {
+                    MediaProjectionManager mpm = (MediaProjectionManager)
+                            act.getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+                    act.startActivityForResult(mpm.createScreenCaptureIntent(), REQ_CONSENT);
+                } catch (Throwable t) {
+                    Log.w(TAG, "申请录屏失败: " + t);
+                } finally {
+                    consentRequesting = false;
+                }
+            });
+        }, "pip-consent").start();
     }
 
     private void pollToken(int code, Intent data, int tries) {
@@ -471,8 +491,12 @@ public final class PipBoard extends LinearLayout {
             try {
                 MediaProjectionManager mpm =
                         (MediaProjectionManager) act.getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-                projection = mpm.getMediaProjection(code, data);
-                if (projection == null) { Log.w(TAG, "getMediaProjection 返回 null"); return; }
+                MediaProjection fresh = mpm.getMediaProjection(code, data);
+                if (fresh == null) { Log.w(TAG, "getMediaProjection 返回 null"); return; }
+                // 覆盖前先停旧的：否则旧录屏会话 + 回调泄漏到进程结束
+                try { if (projection != null && projection != fresh) projection.stop(); }
+                catch (Throwable ignore) {}
+                projection = fresh;
                 projection.registerCallback(new MediaProjection.Callback() {
                     @Override public void onStop() {
                         Log.w(TAG, "录屏被系统撤销");

@@ -168,6 +168,20 @@
             android:name=".RootShellService"
             android:exported="false" />
 
+        <!--
+            APK 自更新：安装 intent 的 Uri 走 SeagullFileProvider（见同名 java，零依赖
+            自绘 FileProvider）。targetSdk 33 下 Uri.fromFile() = FileUriExposedException。
+        -->
+        <provider
+            android:name=".SeagullFileProvider"
+            android:authorities="com.seagull.carlauncher.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <receiver
             android:name=".BootReceiver"
             android:exported="true">

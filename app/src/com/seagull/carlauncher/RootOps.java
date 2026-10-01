@@ -88,9 +88,13 @@ public final class RootOps {
      * 返回 true 表示命令已下发成功（是否真的上去需另行 verify / ensureOnDisplay）。
      */
     public static boolean launchOnDisplay(Context ctx, String pkg, int displayId) {
+        if (pkg == null || !pkg.matches("[a-z0-9_.]+")) {
+            Log.w(TAG, "launchOnDisplay: 包名非法，拒绝执行: " + pkg);
+            return false;
+        }
         String comp = resolveLauncher(ctx, pkg);
-        if (comp == null) {
-            Log.w(TAG, "launchOnDisplay: 找不到 " + pkg + " 的启动组件");
+        if (comp == null || !safeComponent(comp)) {
+            Log.w(TAG, "launchOnDisplay: 找不到 " + pkg + " 的合法启动组件（" + comp + "）");
             return false;
         }
         // 【坑 #5】am start 对已在运行的应用会静默投递到主屏实例：singleTask 复用
@@ -112,11 +116,25 @@ public final class RootOps {
         }
         String out = Caps.exec("am start --user 0 --display " + displayId
                 + " -f " + LAUNCH_FLAGS + " -n " + comp);
-        boolean ok = out != null && !out.contains("Error") && !out.contains("Exception");
+        // 必须正向证据：am start 复用已存在任务时回显
+        // "Warning: Activity not started, its current task has been brought to the front"
+        // —— 里面既无 Error 也无 Exception，旧判据会把"没起来"当成功，
+        // 画中画卡片照常 ready、应用其实停在主屏（批次 O 用户实测症状之一）。
+        boolean ok = out != null
+                && out.contains("Starting")
+                && !out.contains("Error")
+                && !out.contains("Exception")
+                && !out.contains("Warning")
+                && !out.contains("Abort");
         Log.i(TAG, "launchOnDisplay " + comp + " -> display " + displayId + " ok=" + ok
                 + " " + (out == null ? "" : out.trim()));
         if (ok) relaxCompat(pkg);
         return ok;
+    }
+
+    /** 组件名白名单：只允许 包名/类名（可含 $），杜绝用户输入拼进 root 命令列表。 */
+    public static boolean safeComponent(String comp) {
+        return comp != null && comp.matches("[A-Za-z0-9_.]+/[A-Za-z0-9_.$]+");
     }
 
     /**

@@ -347,8 +347,18 @@ public final class LauncherModel {
     private final Context ctx;
 
     public LauncherModel(Context ctx) {
+        this(ctx, true);
+    }
+
+    /**
+     * @param withApps false = 只读存档，跳过 loadApps()（queryIntentActivities +
+     *        每个应用 loadLabel IPC + 全量排序）。每秒一跳的歌词/天气 tick、
+     *        只写存档的场景（悬浮球存位置）都用这个重载 —— 枚举一次全机应用
+     *        在主线程要几十到几百 ms，HD 车机上直接卡一拍。
+     */
+    public LauncherModel(Context ctx, boolean withApps) {
         this.ctx = ctx.getApplicationContext();
-        loadApps();
+        if (withApps) loadApps();
         load();
     }
 
@@ -637,11 +647,13 @@ public final class LauncherModel {
 
     /* ==================== 组件条 ==================== */
 
+    /** 组件条槽位：0=时钟 1=日期 2=电量 3=内存 4=天气，越界的直接丢。 */
     public void toggleWidget(int id) {
+        if (id < 0 || id > 4) return;
         if (widgets.contains(id)) widgets.remove(id);
         else if (widgets.size() < WIDGET_MAX) widgets.add(id);
-        save();
     }
+
     public boolean hasWidget(int id) { return widgets.contains(id); }
 
     /** 换城市：清掉缓存经纬度与旧天气，下次取数重新查地名。 */
@@ -930,7 +942,14 @@ public final class LauncherModel {
             readInto(o.optJSONArray("pinned"), pinned);
             readInto(o.optJSONArray("dock"), dock);
             JSONArray ws = o.optJSONArray("widgets");
-            if (ws != null) for (int i = 0; i < ws.length(); i++) widgets.add(ws.optInt(i));
+            // optInt 对缺省项/非数字项返回 0：脏存档里一个 null 就会把时钟
+            // 悄悄塞回组件条。范围钳制之外只收 0~4
+            if (ws != null) {
+                for (int i = 0; i < ws.length(); i++) {
+                    int id = ws.optInt(i, -1);
+                    if (id >= 0 && id <= 4 && !widgets.contains(id)) widgets.add(id);
+                }
+            }
             JSONArray fs = o.optJSONArray("folders");
             if (fs != null) {
                 for (int i = 0; i < fs.length(); i++) {
@@ -1188,6 +1207,32 @@ public final class LauncherModel {
     public void factoryReset() {
         reset();
         defaults();
+        // defaults() 是「布局」分区的默认值，不是全套；旧实现只 reset+defaults，
+        // 字号/透明/外观/歌词/天气/画中画权重全留在用户的调校值上，
+        // 「恢复出厂」名不副实（用户实测过：重置后字号还是 130%）。
+        resetScalars();
+        save();
         load();
+    }
+
+    /** 标量配置回默认值（defaults() 只管列表类那一组，这里管剩下的）。 */
+    private void resetScalars() {
+        fontScale = 100;
+        showLabels = true;
+        widgetStripAlpha = 100;
+        layoutPreset = 0;
+        customLayoutName = "";
+        lyricLines = 0;
+        lyricOffsetMs = 0;
+        lyricStatusBar = false;
+        lyricNotification = false;
+        lyricHidden.clear();
+        weatherAuto = true;
+        weatherCity = "";
+        weatherUpdatedAt = 0L;
+        themeId = "leaf_shadow";
+        dayNight = DayNight.DARK;
+        pipWeightA = 1;
+        pipWeightB = 1;
     }
 }

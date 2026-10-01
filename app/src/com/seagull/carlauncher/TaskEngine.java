@@ -41,7 +41,7 @@ public final class TaskEngine {
 
     private static void fire(Context c, LauncherModel.TaskTrigger tr) {
         appCtx = c.getApplicationContext();
-        LauncherModel m = new LauncherModel(c);
+        LauncherModel m = new LauncherModel(c, false);
         for (LauncherModel.Task t : m.tasks) {
             if (!t.enabled || t.trigger != tr) continue;
             if (tr == LauncherModel.TaskTrigger.TIMER && !isDue(t)) continue;
@@ -67,7 +67,7 @@ public final class TaskEngine {
             armed = false;
             Context ctx = appCtx;
             if (ctx != null) {
-                LauncherModel m = new LauncherModel(ctx);
+                LauncherModel m = new LauncherModel(ctx, false);
                 for (LauncherModel.Task t : m.tasks) {
                     if (!t.enabled || t.trigger != LauncherModel.TaskTrigger.TIMER) continue;
                     if (isDue(t)) schedule(ctx, t);
@@ -104,7 +104,7 @@ public final class TaskEngine {
         } else if (a == LauncherModel.TaskAction.OPEN_APP) {
             launch(c, t.pkg);
         } else if (a == LauncherModel.TaskAction.REMOVE_FROM_HOME) {
-            LauncherModel m = new LauncherModel(c);
+            LauncherModel m = new LauncherModel(c, false);
             m.pinned.removeIf(k -> k != null && (k.equals(t.pkg) || k.startsWith(t.pkg + "/")));
             m.save();
             Log.i(TAG, "已从主屏移除 " + t.pkg);

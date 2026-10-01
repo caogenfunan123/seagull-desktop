@@ -74,6 +74,11 @@ public final class QuickBar {
      */
     public static View build(Context ctx, final Host host) {
         LauncherModel m = host.model();
+        if (m == null) {
+            // 桌面 Activity 已销毁 / 正在销毁，host.model() 会返回 null。
+            // 旧实现直接 m.quickbar.size()，瞬间 NPE 把 HomeActivity 拖崩。
+            return new View(ctx);
+        }
         LinearLayout bar = new LinearLayout(ctx);
         bar.setOrientation(LinearLayout.HORIZONTAL);
         bar.setGravity(Gravity.CENTER);

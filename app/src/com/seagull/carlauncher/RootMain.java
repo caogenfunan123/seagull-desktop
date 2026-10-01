@@ -40,6 +40,25 @@ public final class RootMain {
     private static volatile long lastActive = System.currentTimeMillis();
     private static volatile int clients;
 
+    /** 单行长度上限：私有 socket 的协议是一行一请求，超长行直接拒绝，别全接进内存。 */
+    private static final int MAX_LINE = 64 * 1024;
+
+    private static String readLineSafe(BufferedReader in) throws IOException {
+        StringBuilder sb = new StringBuilder(256);
+        int ch;
+        while ((ch = in.read()) >= 0) {
+            if (ch == '\n') return sb.toString();
+            if (ch == '\r') continue;
+            if (sb.length() >= MAX_LINE) {
+                // 把这一行剩的读干再拒，避免残留半行走私进下一条请求
+                while ((ch = in.read()) >= 0 && ch != '\n') { /* drain */ }
+                return null;
+            }
+            sb.append((char) ch);
+        }
+        return sb.length() == 0 ? null : sb.toString();
+    }
+
     private RootMain() {}
 
     public static void main(String[] args) {
@@ -55,16 +74,43 @@ public final class RootMain {
         startWatchdog();
         Log.i(TAG, "listening on abstract socket " + SOCKET);
         while (true) {
+            LocalSocket c = null;
             try {
-                LocalSocket c = server.accept();
+                c = server.accept();
+                // peer uid 校验：抽象 socket 上任何同命名空间进程都可能连进来，
+                // 只放行 shell / system / root。否则等于给任意 app 开了一个
+                // 能拉起虚拟屏、转发触摸的特权通道。
+                int uid = peerUid(c);
+                if (uid != android.os.Process.ROOT_UID
+                        && uid != android.os.Process.SYSTEM_UID
+                        && uid != android.os.Process.SHELL_UID) {
+                    Log.w(TAG, "拒绝非特权 peer uid=" + uid);
+                    try { c.close(); } catch (Throwable ignore) {}
+                    continue;
+                }
                 lastActive = System.currentTimeMillis();
                 clients++;
-                Thread t = new Thread(() -> serve(c), "seagull-privd-client");
+                final LocalSocket cc = c;
+                Thread t = new Thread(() -> serve(cc), "seagull-privd-client");
                 t.setDaemon(true);
                 t.start();
             } catch (Throwable t) {
                 Log.w(TAG, "accept 失败: " + t);
+                if (c != null) { try { c.close(); } catch (Throwable ignore) {} }
             }
+        }
+    }
+
+    /** 取对端 uid；LocalSocket.getPeerCredentials() API 29+ 才有，拿不到当 -1（拒绝）。 */
+    private static int peerUid(LocalSocket c) {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                return c.getPeerCredentials().getUid();
+            }
+            return -1;
+        } catch (Throwable t) {
+            Log.w(TAG, "peerUid 失败: " + t);
+            return -1;
         }
     }
 
@@ -77,7 +123,7 @@ public final class RootMain {
              BufferedWriter out = new BufferedWriter(
                      new OutputStreamWriter(s.getOutputStream(), StandardCharsets.UTF_8))) {
             String line;
-            while ((line = in.readLine()) != null) {
+            while ((line = readLineSafe(in)) != null) {
                 lastActive = System.currentTimeMillis();
                 PrivCodec.Request r = PrivCodec.decodeRequest(line);
                 String resp;

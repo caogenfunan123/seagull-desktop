@@ -25,10 +25,16 @@ public class VirtualDisplayActivity extends BaseActivity {
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
+        // RootOps.launchOnDisplay 需要 Context，不 attach 一点「root 代启」就抛
+        // IllegalStateException 崩进程（VirtualDisplayHost.ctx() 直接抛）
+        host.attach(this);
         setContentView(build());
-        append("uid=" + android.os.Process.myUid()
+        // su 探测是同步阻塞（ProcessBuilder + waitFor），放后台线程；
+        // append 内部已 runOnUiThread，直接调即可
+        new Thread(() -> append("uid=" + android.os.Process.myUid()
                 + "  root=" + Caps.hasRoot()
-                + "  自由窗口=不支持  虚拟屏=" + (Caps.canVirtualDisplay(this) ? "可用" : "待验证"));
+                + "  自由窗口=不支持  虚拟屏=" + (Caps.canVirtualDisplay(this) ? "可用" : "待验证")),
+                "vda-probe").start();
         append("点下面按钮逐条走，每步结果都打在这里，同时进 logcat（tag=SeagullVD）。");
     }
 
@@ -201,10 +207,12 @@ public class VirtualDisplayActivity extends BaseActivity {
         runOnUiThread(() -> state.setText(s));
     }
 
-    private void append(String s) {
+    /** buf 会被多个按钮线程并发写，append 整体加锁；setText 回主线程。 */
+    private synchronized void append(String s) {
         android.util.Log.i("SeagullVD", s);
         buf.insert(0, s + "\n");
         if (buf.length() > 6000) buf.setLength(6000);
-        runOnUiThread(() -> { if (log != null) log.setText(buf.toString()); });
+        String shown = buf.toString();
+        runOnUiThread(() -> { if (log != null) log.setText(shown); });
     }
 }
