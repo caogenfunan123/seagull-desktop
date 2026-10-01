@@ -112,15 +112,19 @@ public class GardenActivity extends BaseActivity {
         return t;
     }
 
-    /** 歌词行：批次 G 之前先占位，接上媒体会话后换真实歌词。 */
+    /** 歌词行：接 Lyrics 的一秒一跳，行数与字号都跟设置走（10.5 / 10.6 / 10.15）。 */
     private TextView lyricLine(int sp) {
         TextView t = new TextView(this);
-        t.setText("（歌词在歌词模块落地后显示）");
-        t.setTextSize(sp);
+        t.setText("（没有在放歌）");
+        t.setTextSize(sp * model.lyricSize / 100f);
         t.setTextColor(Skin.c(R.color.text_dim));
+        t.setShadowLayer(dp(4), 0, 0, 0xAA000000);
         t.setGravity(Gravity.CENTER);
+        lyricView = t;
         return t;
     }
+
+    private TextView lyricView;
 
     private TextView leafView() {
         TextView t = new TextView(this);
@@ -155,5 +159,37 @@ public class GardenActivity extends BaseActivity {
 
     @Override public void onBackPressed() {
         finish();   // 4.8 返回键回桌面，不留在菜园
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        Lyrics.start(this);
+        Lyrics.addSink(gardenSink);
+        paintLyric(Lyrics.window(this, model, model.lyricLines));
+    }
+
+    @Override protected void onPause() {
+        Lyrics.removeSink(gardenSink);
+        super.onPause();
+    }
+
+    private final Lyrics.Sink gardenSink = new Lyrics.Sink() {
+        @Override public void onLyric(String[] w, String t, String a) { paintLyric(w); }
+    };
+
+    /** 只改文字，不重建视图：一秒一跳，重建会闪。 */
+    private void paintLyric(String[] w) {
+        if (lyricView == null) return;
+        if (w == null || w.length == 0 || (w.length == 1 && w[0].isEmpty())) {
+            lyricView.setText("（没有在放歌）");
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String s : w) {
+            if (s == null || s.isEmpty()) continue;
+            if (sb.length() > 0) sb.append('\n');
+            sb.append(s);
+        }
+        lyricView.setText(sb.length() == 0 ? "（没有在放歌）" : sb.toString());
     }
 }

@@ -106,6 +106,8 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         } else {
             getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         }
+        Weather.arm(this);          // 20 分钟一次；数据过期时立刻取
+        Lyrics.start(this);         // 一秒一跳，组件条/菜园的歌词都从它出
     }
 
     /** 主题 / 壁纸 / 字号变了才重画，避免每次回桌面都闪一下。 */

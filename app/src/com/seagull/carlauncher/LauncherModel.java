@@ -284,6 +284,12 @@ public final class LauncherModel {
     public CitySource citySource = CitySource.MANUAL;
     public String weatherCity = "";
     public long weatherUpdatedAt = 0L;
+    public boolean weatherAuto = true;      // 9.8 每 20 分钟自动更新
+    public String weatherSummary = "";      // 「晴 26°」
+    public String weatherForecast = "";     // 「明天 多云 20~28°」
+    public String weatherError = "";
+    public double weatherLat = 0;           // 缓存经纬度，换城市时清 0
+    public double weatherLon = 0;
 
     /* ==================== 状态：歌词 ==================== */
 
@@ -611,6 +617,18 @@ public final class LauncherModel {
     }
     public boolean hasWidget(int id) { return widgets.contains(id); }
 
+    /** 换城市：清掉缓存经纬度与旧天气，下次取数重新查地名。 */
+    public void setCity(String name) {
+        weatherCity = name.trim();
+        weatherLat = 0;
+        weatherLon = 0;
+        weatherUpdatedAt = 0L;
+        weatherSummary = "";
+        weatherForecast = "";
+        weatherError = "";
+        save();
+    }
+
     /* ==================== 快捷栏 ==================== */
 
     /** 切换桌面布局：快捷栏按布局各存一份，切回来还是原来那几格。 */
@@ -811,6 +829,12 @@ public final class LauncherModel {
             o.put("citySource", citySource.name());
             o.put("city", weatherCity);
             o.put("cityAt", weatherUpdatedAt);
+            o.put("cityAuto", weatherAuto);
+            o.put("wSummary", weatherSummary);
+            o.put("wForecast", weatherForecast);
+            o.put("wError", weatherError);
+            o.put("wLat", weatherLat);
+            o.put("wLon", weatherLon);
             /* 歌词 */
             o.put("lyricSource", lyricSource.name());
             o.put("lyricLines", lyricLines);
@@ -991,6 +1015,12 @@ public final class LauncherModel {
             citySource = optEnum(o, "citySource", CitySource.class, citySource);
             weatherCity = o.optString("city", "");
             weatherUpdatedAt = o.optLong("cityAt", 0L);
+            weatherAuto = o.optBoolean("cityAuto", true);
+            weatherSummary = o.optString("wSummary", "");
+            weatherForecast = o.optString("wForecast", "");
+            weatherError = o.optString("wError", "");
+            weatherLat = o.optDouble("wLat", 0);
+            weatherLon = o.optDouble("wLon", 0);
 
             lyricSource = optEnum(o, "lyricSource", LyricSource.class, lyricSource);
             lyricLines = o.optInt("lyricLines", 0);

@@ -76,6 +76,13 @@ public class DesktopView extends FrameLayout {
         hiPaint.setStrokeWidth(dp(2));
         hiPaint.setColor(0xFF8CC26A);
         build();
+        // 歌词一秒一跳，组件条里的歌词格跟着换；桌面别的一秒重画一次太浪费
+        Lyrics.addSink(new Lyrics.Sink() {
+            @Override public void onLyric(String[] w, String t, String a) {
+                LauncherModel m = model();
+                if (m != null && m.hasWidget(5)) renderWidgets(m);
+            }
+        });
     }
 
     private int dp(float v) {
@@ -446,8 +453,26 @@ public class DesktopView extends FrameLayout {
             case 1: big.setText(SysOps.dateCn());     small.setText("日期"); break;
             case 2: big.setText(SysOps.batteryPct(getContext())); small.setText("电量"); break;
             case 3: big.setText(SysOps.memFree(getContext()));    small.setText("内存"); break;
-            // ponytail: 4/5 是天气与歌词，等各自模块落地后接真实取值
-            case 4: case 5: big.setText("待接入"); small.setText(WIDGET_NAMES[id]); break;
+            case 4:
+                big.setText(Weather.summary(m));
+                big.setTextSize(15);
+                small.setText(m.weatherForecast.isEmpty() ? Weather.stamp(m) : m.weatherForecast);
+                small.setTextSize(9);
+                // 9.9 点按获取天气：现在数据取一次，不等 20 分钟
+                box.setOnClickListener(v -> Weather.refresh(getContext(), m, () -> {
+                    LauncherModel mm = model();
+                    if (mm != null && host != null) host.onToast(
+                            mm.weatherSummary.isEmpty() ? "天气没取到" : mm.weatherSummary);
+                    refresh();
+                }));
+                break;
+            case 5:
+                String[] w = Lyrics.window(getContext(), m, m.lyricLines > 0 ? Math.min(m.lyricLines, 2) : 2);
+                big.setText(w.length == 0 ? "未在播放" : w[0]);
+                big.setTextSize(13);
+                small.setText(w.length > 1 && !w[1].isEmpty() ? w[1] : Lyrics.nowPlaying());
+                small.setTextSize(9);
+                break;
             default: big.setText("—"); small.setText("空"); break;
         }
         box.addView(big);

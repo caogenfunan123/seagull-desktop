@@ -553,16 +553,62 @@ public class SettingsSectionActivity extends BaseActivity {
             for (int i = 0; i < vals.length; i++) names[i] = vals[i].label;
             choiceDialog("城市来源", names, model.citySource.ordinal(), i -> {
                 model.citySource = vals[i];
-                model.save(); render();
+                model.save();
+                fetchWeather();
+                render();
             });
         });
         actionRow("当前城市", model.weatherCity.isEmpty() ? "未设置（例：杭州）" : model.weatherCity, v ->
                 inputDialog("城市名", model.weatherCity, city -> {
-                    model.weatherCity = city.trim();
-                    model.save(); render();
+                    model.setCity(city);
+                    fetchWeather();
+                    render();
                 }));
-        actionRow("更新于", model.weatherUpdatedAt == 0 ? "尚未更新" : new java.util.Date(model.weatherUpdatedAt).toString(), null);
-        note("当前天气 + 未来 3 天，每 20 分钟更新，数据源和风天气。天气组件在后续版本接入。");
+        toggleRow("每 20 分钟自动更新", model.weatherAuto, () -> { model.weatherAuto = !model.weatherAuto; });
+        actionRow("点按获取天气", Weather.summary(model), v -> fetchWeather());
+        if (model.citySource == LauncherModel.CitySource.AUTO_GPS) {
+            actionRow("定位权限", locGranted() ? "已授权" : "未授权（点这里去开）", v -> grantLocation());
+        }
+        if (!model.weatherForecast.isEmpty()) {
+            sectionLabel("未来 3 天");
+            note(model.weatherForecast);
+        }
+        actionRow("更新于", Weather.updatedLabel(model.weatherUpdatedAt), null);
+        if (!model.weatherError.isEmpty()) note("上次没取到：" + model.weatherError);
+        note("数据源 Open-Meteo 公开接口（免 key）。天气组件在组件条里，点一下就能手动取一次。");
+    }
+
+    private void fetchWeather() {
+        Weather.refresh(this, model, () -> runOnUiThread(this::render));
+    }
+
+    private boolean locGranted() {
+        try {
+            return checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** root 机直接 pm grant，普通机走系统弹窗。 */
+    private void grantLocation() {
+        String perm = android.Manifest.permission.ACCESS_COARSE_LOCATION;
+        if (Caps.hasRoot()) {
+            Caps.exec("pm grant " + getPackageName() + " " + perm);
+            runOnUiThread(this::render);
+            return;
+        }
+        try {
+            requestPermissions(new String[]{perm}, 9001);
+        } catch (Throwable t) {
+            toast("这台机器不给定位权限，按网络判断城市也一样能用");
+        }
+    }
+
+    @Override public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
+        super.onRequestPermissionsResult(code, perms, res);
+        if (code == 9001) render();
     }
 
     private void lyricsBody() {
@@ -597,11 +643,27 @@ public class SettingsSectionActivity extends BaseActivity {
             });
         });
         sliderRow("媒体卡片行数", 1, 6, model.mediaCardLines, " 行", v -> { model.mediaCardLines = v; });
+        toggleRow("状态栏歌词", model.lyricStatusBar, () -> { model.lyricStatusBar = !model.lyricStatusBar; });
+        toggleRow("通知文字歌词", model.lyricNotification, () -> { model.lyricNotification = !model.lyricNotification; });
+        toggleRow("车载蓝牙歌词（媒体信息）", model.lyricBluetooth, () -> { model.lyricBluetooth = !model.lyricBluetooth; });
+        actionRow("这首歌词不对（换版本）", "在搜到的版本里轮换", v -> {
+            Lyrics.nextVersion(this);
+            toast("换了一版");
+        });
+        String ck = Lyrics.currentKey();
+        toggleRow("当前这首不显示歌词", ck.isEmpty() ? false : model.lyricHidden.contains(ck), () -> {
+            if (ck.isEmpty()) { toast("现在没有歌在放"); return; }
+            if (model.lyricHidden.contains(ck)) model.lyricHidden.remove(ck);
+            else model.lyricHidden.add(ck);
+            model.save(); render();
+        });
+        if (ck.isEmpty()) note("10.9 这首不显示歌词、10.10 换版本都要先有歌在放。");
+        actionRow("清空歌词缓存", "缓存的 lrc 文件", v -> toast("清了 " + Lyrics.clearCache(this) + " 个"));
         actionRow("通知使用权", notiListenerOn() ? "已授权" : "未授权（点这里去开）", v -> {
             try { startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)); }
             catch (Throwable ignore) {}
         });
-        note("车载蓝牙歌词走媒体信息，不需通知权限。歌词解析与显示在后续版本接入。");
+        note("车载蓝牙歌词走媒体信息，不需通知权限。歌词组件在组件条里，菜园里也会显示同一份。");
     }
 
     private static String offsetLabel(int ms) {
