@@ -87,11 +87,12 @@ public final class Caps {
     /* ---------------- 虚拟屏（特权档） ---------------- */
 
     /**
-     * 真正的判定标准（对齐我们对原始实现的分析）：
-     *   uid == 1000  （system 用户，即系统应用）
-     * 且 createVirtualDisplay 能成功。
-     * 普通应用即使调用成功，setLaunchDisplayId 把别的应用启动进虚拟屏也会被
-     * 系统拒绝，所以 uid 判定是必要条件。
+     * 虚拟屏能力判定：
+     *   · uid == 1000（system 应用）→ 自己建屏自己搬，稳；
+     *   · 有 root → 守护进程以 uid 0 进程内反射搬应用（批次 J 新增路径，
+     *     Extendroid 同款机制）。🟡 待真机验证：SELinux 是否放行 abstract socket、
+     *     ROM 是否裁剪 moveRootTaskToDisplay，容器里验不了，先如实标出来；
+     *   · 都没有 → 不可用。
      */
     public static synchronized boolean canVirtualDisplay(Context ctx) {
         if (sVirtualDisplay != null) return sVirtualDisplay;
@@ -99,14 +100,19 @@ public final class Caps {
         if (Process.myUid() == Process.SYSTEM_UID) {
             ok = probeVirtualDisplay(ctx);
         } else if (hasRoot()) {
-            // 非 system uid 时，只能靠 root 侧辅助进程去实现真正的「搬应用」，
-            // 应用内自己建虚拟屏能建，但搬不进去。
-            ok = false;
+            ok = true;
         } else {
             ok = false;
         }
         sVirtualDisplay = ok;
         return ok;
+    }
+
+    /** 虚拟屏的落地路径，给体检报告如实写清楚用。 */
+    public static synchronized String vdPath() {
+        if (Process.myUid() == Process.SYSTEM_UID) return "system uid 直连";
+        if (hasRoot()) return "root 守护进程反射（待真机验证）";
+        return "不可用";
     }
 
     private static boolean probeVirtualDisplay(Context ctx) {
@@ -150,7 +156,7 @@ public final class Caps {
           .append(Process.myUid() == Process.SYSTEM_UID ? "  ← system" : "  (普通应用)").append('\n');
         sb.append("root      : ").append(hasRoot() ? "有" : "无").append("  |  ").append(rootWho()).append('\n');
         sb.append("悬浮窗权限: ").append(canOverlay(ctx) ? "已授权" : "未授权").append('\n');
-        sb.append("虚拟屏    : ").append(canVirtualDisplay(ctx) ? "可用（特权档）" : "不可用（需 system uid，或 root 侧辅助）").append('\n');
+        sb.append("虚拟屏    : ").append(canVirtualDisplay(ctx) ? "可用（" + vdPath() + "）" : "不可用（需 system uid 或 root）").append('\n');
         sb.append("───────────────\n");
         sb.append("当前档位  : ").append(levelName(level(ctx)));
         return sb.toString();

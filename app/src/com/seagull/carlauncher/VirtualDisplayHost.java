@@ -39,6 +39,7 @@ public final class VirtualDisplayHost {
 
     private VirtualDisplay vd;
     private int displayId = -1;
+    private Context appCtx;
 
     public int displayId() { return displayId; }
 
@@ -47,10 +48,12 @@ public final class VirtualDisplayHost {
         release();
         try {
             DisplayManager dm = (DisplayManager) ctx.getSystemService(Context.DISPLAY_SERVICE);
-            // WITHOUT surface：虚拟屏自己持有内容，这样启动进去的应用才画得出来
+            // WITHOUT surface：虚拟屏自己持有内容，这样启动进去的应用才画得出来。
+            // flags 与 MirrorSlot 保持一致（PUBLIC|AUTO_MIRROR）：OWN_CONTENT_ONLY
+            // 只显示同 UID 内容，第三方应用 task 上来了画面也是黑的（批次 J 实测根因）。
             vd = dm.createVirtualDisplay("seagull-vd", w, h, dpi, (Surface) null,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
-                            | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY);
+                            | DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR);
             if (vd == null) {
                 return new R(false, "createVirtualDisplay 返回 null（权限或资源被拒）");
             }
@@ -88,10 +91,21 @@ public final class VirtualDisplayHost {
     }
 
     /**
-     * 回退通道：由 root 以 shell 身份代启（shell 持有 ADD_TRUSTED_DISPLAY）。
-     * 这是本机唯一「不依赖平台签名」就能把应用搬进虚拟屏的路径。
+     * 回退通道：root 代启。现在统一走 RootOps.launchOnDisplay ——
+     * 守护进程进程内反射 → 公开 API → am 命令，三级降级都在里面。
+     * 以前只有裸 `am start`，命令解析与输出都要猜，先留着这条对比口径。
      */
     public R launchViaRoot(String pkg) {
+        if (displayId < 0) return new R(false, "还没建虚拟屏");
+        if (!Caps.hasRoot()) return new R(false, "无 root 通道");
+        boolean ok = RootOps.launchOnDisplay(ctx(), pkg, displayId);
+        return new R(ok, ok
+                ? "RootOps.launchOnDisplay 已下发 " + pkg + " → display " + displayId
+                : "RootOps.launchOnDisplay 三级通道全部失败");
+    }
+
+    /** 老 am 直启口径也留着（排障时对比守护进程与裸命令的差异）。 */
+    public R launchViaAm(String pkg) {
         if (displayId < 0) return new R(false, "还没建虚拟屏");
         if (!Caps.hasRoot()) return new R(false, "无 root 通道");
         String cmd = "am start --display " + displayId
@@ -106,6 +120,19 @@ public final class VirtualDisplayHost {
                     || line.contains("Warning") || line.contains("Permission")) err = line.trim();
         }
         return new R(ok && err == null, out.trim() + (err != null ? "\n  ⚠ " + err : ""));
+    }
+
+    private Context ctx() {
+        if (appCtx == null) {
+            throw new IllegalStateException("VirtualDisplayHost 未 attach Context");
+        }
+        return appCtx;
+    }
+
+    /** create/verify 之前 attach 一次（RootOps.launchOnDisplay 需要 Context）。 */
+    public void attach(Context ctx) {
+        this.appCtx = ctx.getApplicationContext();
+        PrivClient.init(ctx);
     }
 
     /** 第三步：确认目标是否真的落在虚拟屏上（解析 dumpsys 的 Task 段，不是 DisplayContent 段）。 */

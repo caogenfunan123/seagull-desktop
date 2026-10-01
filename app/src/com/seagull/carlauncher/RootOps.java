@@ -14,9 +14,13 @@ import java.util.List;
  * 技术来源：用户自己的仓库 caogenfunan123/carlink-desktop 的 svc/RootAuth.kt（Kotlin 移植为 Java），
  * 以及 carplay-reverse-engineering 报告 §6/§11 的核验结论：
  *   · 建虚拟屏走【公开的 MediaProjection.createVirtualDisplay】，不需要 ADD_TRUSTED_DISPLAY
- *   · 把目标应用拉进虚拟屏走 root：am start --display <id> -f <flags> -n <comp>
- *   · 触摸回注走 root：input -d <id> tap|swipe ...
+ *   · 把目标应用拉进虚拟屏走 root：守护进程进程内反射 startActivityAsUser（批次 J 新增），
+ *     失败回退 root `am start --display <id> -f <flags> -n <comp>`
+ *   · 触摸回注走 root：守护进程 injectInputEvent（真多指），失败回退 `input -d <id> ...`
  * 全程不依赖目标进程内的任何 hook。
+ *
+ * 降级链是硬规则：PrivClient 每一条失败都如实返回 false，命令照旧走 shell，
+ * 调用方永远拿得到「成功」或「明确的失败」，不存在第三条路。
  */
 public final class RootOps {
 
@@ -27,8 +31,10 @@ public final class RootOps {
      *   0x10000000 NEW_TASK   —— 必须有，root 启动无 Activity 上下文
      *   0x08000000 MULTIPLE_TASK —— 强制在虚拟屏新建独立任务（否则可能复用主屏已有任务）
      * 组合 = 0x18000000。加上 NEW_DOCUMENT(0x00080000) 得 0x18080000 亦可用。
+     * LAUNCH_FLAGS（字符串）给 am 命令用，LAUNCH_FLAGS_INT 给守护进程用。
      */
     public static final String LAUNCH_FLAGS = "0x18000000";
+    public static final int LAUNCH_FLAGS_INT = 0x18000000;
 
     private RootOps() {}
 
@@ -70,7 +76,12 @@ public final class RootOps {
     /* ---------------- 把应用拉进虚拟屏 ---------------- */
 
     /**
-     * 双路启动：① 先试公开 API（部分 ROM 允许），失败落 ② root。
+     * 三路启动，按可靠性排：
+     *   ① root 守护进程进程内反射 startActivityAsUser（callingPackage=com.android.shell，
+     *      ActivityOptions.setLaunchDisplayId）—— 与 am 同权，但没有进程启动开销，
+     *      也不会被 am 的 argv 解析坑；
+     *   ② 公开 API（部分 ROM 允许普通应用自己 startActivity 到虚拟屏）；
+     *   ③ root `am start --display`（命令兜底，各 ROM 裁得最凶但普遍还在）。
      * 返回 true 表示命令已下发成功（是否真的上去需另行 verify）。
      */
     public static boolean launchOnDisplay(Context ctx, String pkg, int displayId) {
@@ -78,6 +89,11 @@ public final class RootOps {
         if (comp == null) {
             Log.w(TAG, "launchOnDisplay: 找不到 " + pkg + " 的启动组件");
             return false;
+        }
+        PrivClient.init(ctx);
+        if (PrivClient.launch(displayId, comp, LAUNCH_FLAGS_INT)) {
+            Log.i(TAG, "launchOnDisplay[" + pkg + "] 走守护进程成功 -> display " + displayId);
+            return true;
         }
         if (launchViaApi(ctx, comp, displayId)) {
             Log.i(TAG, "launchOnDisplay[" + pkg + "] 走 API 成功 -> display " + displayId);
@@ -176,13 +192,18 @@ public final class RootOps {
     }
 
     /**
-     * TaskMover：把任务迁移到目标 display 的 root task（报告 §11.3 核验逻辑）。
-     * 优先走 root 行命令，避免应用侧 MANAGE_ACTIVITY_TASKS 权限问题。
+     * TaskMover：把任务迁移到目标 display。
+     * 优先走守护进程的 moveRootTaskToDisplay 反射（Android 14+ 有这个隐藏方法，
+     * root uid 调用直接过权限检查）；失败回退 `am task move-task` 命令链。
      */
-    public static String moveTaskToDisplay(String pkg, int displayId, String anchorPkg) {
+    public static String moveTaskToDisplay(Context ctx, String pkg, int displayId, String anchorPkg) {
         if (!Caps.hasRoot()) return "无 root";
         int taskId = findTaskId(pkg, -1);
         if (taskId < 0) return "找不到 " + pkg + " 的 task";
+        PrivClient.init(ctx);
+        if (PrivClient.move(taskId, displayId)) {
+            return "task=" + taskId + " -> display " + displayId + " : 守护进程反射成功";
+        }
         String out = Caps.exec("am task move-task " + taskId + " " + displayId + " true");
         return "task=" + taskId + " -> display " + displayId + " : "
                 + (out == null ? "无回显" : out.trim());

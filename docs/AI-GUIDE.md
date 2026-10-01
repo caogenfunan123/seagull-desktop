@@ -51,8 +51,11 @@ app/
     Lyrics.java / Lrc.java     歌词一跳一拍 / 纯 Java 解析
     TaskEngine.java            自动化任务
     TaskMover.java             窗口搬运（root）
-    TouchForward.java          触摸转发状态机
+    TouchForward.java          触摸转发（双通道：守护中继 / input 命令）
     MirrorSlot.java            虚拟屏镜像槽（两块）
+    PrivCodec.java             守护进程线协议（纯 JVM，可自检）
+    PrivClient.java            守护进程客户端（拉起/重连/降级）
+    RootMain.java              app_process 守护进程入口（反射隐藏 API）
     Caps.java / SysOps.java / RootOps.java   能力探测 / 系统操作 / root 通道
 docs/
   ARCHITECTURE.md              分层、模块职责、关键流程、存档 JSON（先读这个）
@@ -182,7 +185,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | 主题切换后颜色没变 | 取色是不是用了 `getColor` 而不是 `Skin.c` |
 | 字体没跟着设置走 | Activity 是不是继承了 `Activity` 而不是 `BaseActivity` |
 | 镜像窗口不显示 | `WindowTestActivity`（能力探测逐项验证）+ `MirrorSlot.describe()` |
-| 触摸没反应 | 设置 → 触摸 → 注入排障（最近命令与返回）+ `Caps.rootWho()` |
+| 触摸没反应 | 设置 → 触摸 → 注入排障（最近命令与返回）+ `Caps.rootWho()` + `PrivClient.status()` |
 | 任务不执行 | `TaskEngine` 的 `trigger` / `atMin` / `enabled`；日志 tag `SeagullTask` |
 | 歌词不动 | 媒体会话是否在播；`SeagullLyric` 日志；歌词来源是否选了「只用本地」 |
 | 天气取不到 | 城市是否填了；`weatherError`；`SeagullWeather` 日志 |

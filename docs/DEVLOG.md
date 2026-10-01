@@ -257,6 +257,70 @@
 
 **遗留**：11.13/11.14/13.6/12.6 都要在真机（有 root）上验证命令可用性；容器里只能保证代码路径与降级提示正确。
 
+---
+
+## 批次 J — root 守护进程 + L3 黑屏/触摸修复
+
+**目标**：L3（虚拟屏窗口）建了屏但不出画面、触摸打不进去——两个根因一起修：
+① 虚拟屏 flags 把第三方应用的窗口拦在外面；② 特权动作全依赖 fork root shell 的
+`am`/`input` 命令，慢且表达不了多指。机制对齐 Extendroid：root uid 守护进程
+进程内反射隐藏 API（startActivityAsUser / injectInputEvent / moveRootTaskToDisplay）。
+
+**改动**
+
+- 新增 `PrivCodec.java`：Launcher 与守护进程之间的行文本协议
+  （`PING / LAUNCH / MOTION / MOVE / REMOVE`，一请求一应答，脏报文丢事件不杀进程）。
+  刻意零 `android.*` import，协议层能在纯 JVM 上自检。
+- 新增 `PrivClient.java`：app 侧 LocalSocket 客户端。`su -c setsid sh -c
+  'CLASSPATH=base.apk exec app_process RootMain'` 拉起守护进程（setsid 脱离桌面进程组，
+  桌面被杀重建不陪葬；不 waitFor，app_process 是常驻进程等它退出会死锁）。
+  拉起失败判会话级禁用，后续命令照旧走 shell 兜底。
+- 新增 `RootMain.java`：root uid 守护进程。反射 `ServiceManager` 拿服务，
+  `IActivityManager.startActivityAsUser`（优先 am 同款 11 参重载，callingPackage 固定
+  `com.android.shell`，`ActivityOptions.setLaunchDisplayId` 指定目标屏）；
+  `IInputManager.injectInputEvent` + `MotionEvent.setDisplayId` 注入 MotionEvent
+  （多指、带时间戳，真手势保真）；`moveRootTaskToDisplay` / `removeTask` 搬屏删任务。
+  无客户端 60s 自退出，不宿留。
+- `MirrorSlot` 建屏 flags 改 `PUBLIC | AUTO_MIRROR`：去掉 `OWN_CONTENT_ONLY`
+  （只显示与建屏者同 UID 的内容——黑屏根因，导航/音乐 task 明明在屏上）与
+  `PRESENTATION`（展示屏语义，同样拦第三方窗口）。
+- `TouchForward`：修触摸命令双写 `input` 的 bug（`input -d N input tap` 必然报
+  未知子命令）；守护进程在位时改「原始事件中继」——MotionEvent 连坐标带时间戳原样
+  进目标屏，多指缩放天然成立，每次手势零命令开销；通道钉在每次 DOWN 上，手势中途不换。
+- `RootOps.launchOnDisplay` 改三路（守护进程反射 → 公开 API → `am start`）；
+  `moveTaskToDisplay` 优先守护进程 `moveRootTaskToDisplay`。
+- `VirtualDisplayHost`：flags 同修；`launchViaRoot` 走 RootOps 三级链；
+  新增 `attach(Context)` 与 `launchViaAm`（裸 am 口径，排障对比用）。
+- `SelfTestL3`：补 `PrivClient.status()` 行与裸 am 对比步。
+- `Caps`：有 root 即认为 L3 可用（🟡 待真机验证），新增 `vdPath()` 让体检报告
+  写清落地路径（system uid 直连 / root 守护进程反射 / 不可用）。
+- 新增 `app/selfcheck/PrivCodecCheck.java`：30 项协议自检。
+
+**复盘**
+
+- 做对：协议层不碰 `android.*`，30 项断言在容器里真跑得起来（协议错一个字符，
+  对面整条命令失效，这层测试值）。降级链做成硬规则：PrivClient 每一步失败都只
+  「如实返回 false」，命令永远有 shell 兜底。
+- 做错：MOTION 报文第一版没带 displayId —— 守护进程同时服务两块镜像槽，
+  事件必须自带目标屏，不能默认「就一块」。
+- 做错：长按的守护进程实现第一版发的是 `CANCEL` —— CANCEL 语义是「取消手势」，
+  长按得是 DOWN→保持→UP 同点。
+- 决策：守护进程用 `app_process` 而不是 native 守护 —— 直接复用 APK 里的 Java
+  反射代码，省一套 NDK 构建与 .so 分发；隐藏 API 在 app_process 里无 enforcement。
+- 决策：`setsid` 拉起 + 60s 空闲自退的组合，而不是常驻 —— 桌面被杀重建时守护
+  进程不必重启，孤儿 root 进程也有兜底。
+
+**验证**：`typecheck.sh` 通过；`PrivCodecCheck` 30 项通过。守护进程路径
+（SELinux 是否放行 abstract socket、HyperOS KernelSU 域、ROM 是否裁剪
+moveRootTaskToDisplay）容器里验不了，全部标 🟡 待真机。
+
+**遗留**：① 真机验证守护进程全链路；② 手势中途连接断掉时，余下事件会掉
+（已记日志，下次手势自动恢复）；③ `findTaskId` 的 `dumpsys` 解析口径与
+TODO 已知坑 #11（Task 行本身没有 `displayId=`）不符，`moveTaskToDisplay`
+的 taskId 来源要复核；④ `launchViaApi` 公开 API 路径在 HyperOS 上被
+SecurityException 拒过一次，守护进程路径是否绕过待真机确认。
+
+
 
 
 

@@ -15,16 +15,20 @@ public final class SelfTestL3 {
                         .hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE));
 
                 VirtualDisplayHost host = new VirtualDisplayHost();
+                host.attach(ctx);
                 line("① create → " + host.create(ctx, 960, 540, 160));
                 line("② launch(com.android.settings) → " + host.launch(ctx, "com.android.settings"));
                 Thread.sleep(1500);
                 line("③ verify → " + host.verify(ctx, "com.android.settings"));
-                line("④ rootLaunch(com.android.settings) → " + host.launchViaRoot("com.android.settings"));
+                line("④ launchViaRoot(com.android.settings) → " + host.launchViaRoot("com.android.settings"));
+                line("   PrivClient: " + PrivClient.status());
                 Thread.sleep(1500);
                 line("⑤ verify2 → " + host.verify(ctx, "com.android.settings"));
-                line("⑥ focusTask → " + host.focusTask());
+                line("⑥ launchViaAm(裸 am 口径) → " + host.launchViaAm("com.android.settings"));
+                Thread.sleep(1500);
+                line("⑦ focusTask → " + host.focusTask());
                 host.release();
-                line("⑦ 已释放虚拟屏");
+                line("⑧ 已释放虚拟屏");
             } catch (Throwable t) {
                 line("EXCEPTION " + t);
             }

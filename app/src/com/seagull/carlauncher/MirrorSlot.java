@@ -55,6 +55,8 @@ public final class MirrorSlot {
     public MirrorSlot(Context ctx, String name) {
         this.ctx = ctx;
         this.name = name;
+        // 给 PrivClient 一个上下文：守护进程靠 base.apk 路径拉起，早给早生效
+        PrivClient.init(ctx);
     }
 
     public int displayId() { return displayId; }
@@ -116,12 +118,13 @@ public final class MirrorSlot {
         try {
             vd = mp.createVirtualDisplay(
                     "seagull-" + name, w, h, dpi,
-                    // PUBLIC：目标 App 的窗口能被这块屏承载并对系统可见
-                    // OWN_CONTENT_ONLY：不与主屏镜像耦合，屏上内容由我们启动的应用产生
-                    // PRESENTATION：作为展示型输出屏
+                    // Extendroid 实测跑得通的组合：PUBLIC + AUTO_MIRROR。
+                    // 曾经的黑屏根因：OWN_CONTENT_ONLY 只显示【与建屏者同 UID】的内容 ——
+                    // 导航/音乐是别人的 uid，task 明明搬上来了（dumpsys 看得见），
+                    // 画面照样是黑的。PRESENTATION（展示屏）同样把第三方窗口拦在外面。
+                    // AUTO_MIRROR：这块屏暂无自有内容时回退镜像主屏，目标应用启动前的间隙不黑屏。
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
-                            | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
-                            | DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION,
+                            | DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                     surface, null, mainHandler);
         } catch (Throwable t) {
             lastError = "createVirtualDisplay 失败: " + t;

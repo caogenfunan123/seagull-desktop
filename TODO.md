@@ -170,12 +170,22 @@
 - [x] 防误滑阈值、长按判定（300/500ms）
 - [x] 跟手（`touchFollow`，每 ≥16ms 一小段）
 - [x] 触摸方式选择（root input / 无障碍）、注入排障日志
+- [x] 修 `input -d N input tap` 双写 input（批次 J）
 - [ ] 无障碍 `dispatchGesture` 通道：整套无障碍服务授权成本高，暂缓
 
 ### P2-4 系统监控增强 ✅
 - [x] CPU（`/proc/stat` 两次采样差）/ 温度 / 内存一行读数
 - [x] 一键清理后台（`SysOps.killBackground`）
 - [x] 息屏暂停 + 亮屏恢复（开关已接）
+
+### P2-5 root 守护进程与 L3 修复 🟡 代码已写，真机待验（批次 J）
+- [x] `PrivCodec` 线协议 + `PrivCodecCheck` 30 项自检（纯 JVM）
+- [x] `PrivClient`：`su -c setsid app_process` 拉起守护进程、断线重连、会话级禁用
+- [x] `RootMain`：反射 `startActivityAsUser`（setLaunchDisplayId）/ `injectInputEvent`（多指）/ `moveRootTaskToDisplay` / `removeTask`
+- [x] VD flags 修正 `PUBLIC|AUTO_MIRROR`（去掉 `OWN_CONTENT_ONLY`=黑屏根因）
+- [x] 守护进程在位时触摸改原始事件中继（多指、零命令开销）
+- [ ] 真机验证：SELinux 是否放行 abstract socket、KernelSU su 域、ROM 是否裁剪 `moveRootTaskToDisplay`
+- [ ] 复核 `findTaskId` 的 dumpsys 口径（已知坑 #11）
 
 ---
 

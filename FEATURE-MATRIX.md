@@ -239,7 +239,7 @@
 | # | 功能 | 状态 | 备注 |
 |---|---|---|---|
 | 11.1 | 画中画（系统 PiP，L2） | ✅ | 实测可用 |
-| 11.2 | 虚拟屏窗口（L3，root） | ✅ | displayId=11 实测通过 |
+| 11.2 | 虚拟屏窗口（L3，root） | 🟡 | flags 修正为 PUBLIC\|AUTO_MIRROR（原 OWN_CONTENT_ONLY 只显示同 UID 内容=黑屏根因）+ root 守护进程进程内反射启动，待真机复验 |
 | 11.3 | 每格绑应用 | ✅ | 镜像两槽各绑一个包名，存 `mirrorPkg1/2` |
 | 11.4 | 各应用显示大小（独立 dpi） | ⛔ | `setDisplayId` 被拒 |
 | 11.5 | 默认显示大小 | ⛔ | 同上 |
@@ -250,7 +250,7 @@
 | 11.10 | 全屏打开（窗口留着） | ✅ | 拉应用进虚拟屏 = 主屏窗口留着 |
 | 11.11 | 全屏打开（关掉别的腾位置） | 🟡 | 回收要 root `am`（见 TaskMover），非 root 下不自动关 |
 | 11.12 | 兼容模式（强制应用可调整大小） | ✅ | `am task resizeable`（root），设置里可开关 |
-| 11.13 | 收回窗口 | 🟡 | root `am task move-to-display`，各家 ROM 子命令不一致，按顺序试并把返回摊在设置页 |
+| 11.13 | 收回窗口 | 🟡 | 优先守护进程 `moveRootTaskToDisplay` 反射；ROM 无此方法时回退 root `am task move-to-display`，各家子命令不一致，按顺序试并把返回摊在设置页 |
 | 11.14 | 从边缘小标签拉回窗口 | 🟡 | 镜像槽右缘「收回」小标签；拉回走同一套命令 |
 | 11.15 | 窗口最大宽度 | ✅ | 建屏尺寸按窗口大小算，不超屏 |
 | 11.16 | 窗口尺寸下限保护 | ⛔ | 需 L3 |
@@ -265,8 +265,8 @@
 
 | # | 功能 | 状态 | 备注 |
 |---|---|---|---|
-| 12.1 | 触摸转发（点/滑/长按传进去） | ✅ | `TouchForward`：串行注入，命令与返回进环形日志 |
-| 12.2 | 触摸方式选择 | ✅ | root `input` 命令 / 无障碍通道 二选一 |
+| 12.1 | 触摸转发（点/滑/长按传进去） | ✅ | 双通道：守护进程在位走 `injectInputEvent` 原始事件中继（真多指/零命令开销，修掉了 `input -d N input tap` 双写 input 的 bug），不在位走 root `input` 命令 + TouchForward 手势状态机 |
+| 12.2 | 触摸方式选择 | ✅ | 自动：root 守护进程中继优先，缺失回退 `input` 命令 / 无障碍通道二选一 |
 | 12.3 | 防误滑 | ✅ | `touchThreshold`（0~50px），低于阈值算点 |
 | 12.4 | 长按判定时长（0.3/0.5 秒） | ✅ | `longPressMs` + `TouchForward.longPress()` 发原地长 swipe |
 | 12.5 | 跟手 | ✅ | 跟手开：MOVE 每 ≥16ms 发一小段；关：抬手一次发完 |
@@ -349,7 +349,7 @@
 | 17.2 | 作者信息 | ✅ | 公开版多窗口车机桌面 · 无账号 / 无会员 / 纯本地 |
 | 17.3 | 检查更新 | ✅ | 打 GitHub `releases/latest` 比版本号 |
 | 17.4 | 自更新（下载安装） | ✅ | 下载 apk 到 filesDir → 系统安装器（清单已申请 REQUEST_INSTALL_PACKAGES） |
-| 17.5 | 体检报告 | ✅ | `Caps.report()`：root / 悬浮窗 / 虚拟屏 / 截屏能力汇总 |
+| 17.5 | 体检报告 | ✅ | `Caps.report()`：root / 悬浮窗 / 虚拟屏 / 截屏能力汇总，虚拟屏附落地路径（`vdPath()`） |
 | 17.6 | 安装包指纹 | ✅ | 签名证书 SHA-256（改用 `GET_SIGNING_CERTIFICATES`，弃用 API 换掉） |
 
 # 六、公开版可行性分类（关键）
@@ -393,9 +393,9 @@
 
 | 能力 | 机制 | 涉及条目 |
 |---|---|---|
-| 虚拟屏窗口 | root `am start --display` | 11.2、11.9 |
-| 触摸注入 | root `input -d` | 12.1 |
-| 窗口搬运 | root `am` + `dumpsys` 解析 | 11.13、11.14 |
+| 虚拟屏窗口 | root 守护进程（app_process）进程内反射 `startActivityAsUser` + `setLaunchDisplayId`，回退 `am start --display` | 11.2、11.9 |
+| 触摸注入 | root 守护进程 `injectInputEvent` + `MotionEvent.setDisplayId`（真多指），回退 `input -d` | 12.1 |
+| 窗口搬运 | 守护进程 `moveRootTaskToDisplay` 反射 + `dumpsys` 解析，回退 `am` | 11.13、11.14 |
 | 释放内存 | root `am kill` | 15.11 |
 | 系统属性读 | root | 15.10 |
 
