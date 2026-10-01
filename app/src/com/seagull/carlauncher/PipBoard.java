@@ -91,6 +91,8 @@ public final class PipBoard extends LinearLayout {
     private View borderA, borderB;        // 焦点高亮描边
     private TextView takeA, takeB;        // 「点击接管」
     private final boolean[] longFired = {false, false, false};
+    /** armed[i] = 本手势（从 DOWN 起）发生在这块画布已是焦点的时候，才允许外注入。 */
+    private final boolean[] armed = {false, false, false};
 
     /** 单焦点：只有它能收触摸。初始槽 1。 */
     private int focusSlot = 1;
@@ -240,6 +242,10 @@ public final class PipBoard extends LinearLayout {
         FrameLayout.LayoutParams ep = new FrameLayout.LayoutParams(-2, -2);
         ep.gravity = Gravity.CENTER;
         card.addView(empty, ep);
+        // 空态大按钮自己收点击（它是可点击的 child，触摸不经卡容器）。
+        // 【坑】卡内 SurfaceView 绝不能 setClickable(true)：一旦可点击，它会吞掉
+        // 整块画布的触摸（批次 N 因此两块画布都弹不出选择器），卡容器的长按/转发
+        // 全死。SurfaceView 保持不可点击，触摸统一走卡容器 OnTouchListener。
 
         View mask = new View(act);
         mask.setBackgroundColor(Color.BLACK);
@@ -270,6 +276,7 @@ public final class PipBoard extends LinearLayout {
 
         // 单一触摸入口：焦点拦截 / 空态选择 / 手势转发全在这判
         final int w = which;
+        empty.setOnClickListener(v -> openPick(w));   // 空态按钮是卡内可点击 child，自己收点击
         final GestureDetector gd = new GestureDetector(act,
                 new GestureDetector.SimpleOnGestureListener() {
             @Override public boolean onDown(MotionEvent e) { return true; }
@@ -284,27 +291,24 @@ public final class PipBoard extends LinearLayout {
             int a = e.getActionMasked();
             if (a == MotionEvent.ACTION_DOWN) {
                 if (w != focusSlot) {
-                    // 安全红线：第一下只切焦点，不吃进 App
+                    // 安全红线：第一下只切焦点，不吃进 App。armed=false 让本手势
+                    // 后续的 MOVE/UP 也不外泄：否则失焦瞬间的 UP 会被注进旧 App
+                    // （地图里凭空多点一下），空画布上还会顺带弹选择器。
+                    armed[w] = false;
                     switchFocus(w);
                     return true;
                 }
+                armed[w] = true;
                 longFired[w] = false;
-                View btn = w == 1 ? emptyA : emptyB;
-                if (btn != null && btn.getVisibility() == View.VISIBLE) {
-                    btn.setAlpha(0.6f);   // 无震动马达时的按下态兜底
-                    btn.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
-                }
-            } else if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) {
-                View btn = w == 1 ? emptyA : emptyB;
-                if (btn != null) btn.setAlpha(1f);
             }
             MirrorSlot s = slotOf(w);
-            if (s != null && s.ready() && !longFired[w]) s.onTouch(e);
-            gd.onTouchEvent(e);
-            if (s == null || !s.ready()) {
+            if (armed[w] && s != null && s.ready() && !longFired[w]) s.onTouch(e);
+            if (armed[w]) gd.onTouchEvent(e);
+            if (armed[w] && (s == null || !s.ready())) {
                 // 没 App 可误触：焦点态下点一下直接选应用（可发现性优先）
                 if (a == MotionEvent.ACTION_UP && !longFired[w]) openPick(w);
             }
+            if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) armed[w] = false;
             return true;
         });
 
@@ -321,8 +325,7 @@ public final class PipBoard extends LinearLayout {
                 updateHints();
             }
         });
-        view.setFocusable(true);
-        view.setClickable(true);
+        // 注意：这里绝不能 view.setClickable(true) —— 见上面 openPick 处的说明。
         return card;
     }
 
@@ -653,6 +656,9 @@ public final class PipBoard extends LinearLayout {
 
     /** 供 showPicker 的「清空该槽」回调刷新提示。 */
     public void updateHintsPublic() { updateHints(); }
+
+    /** 周期自愈入口（HomeActivity tick 调）。 */
+    public void selfHealPublic() { selfHeal(); }
 
     public static String loadPkg(Context ctx, int which) {
         return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)

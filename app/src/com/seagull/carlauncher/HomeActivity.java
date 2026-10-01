@@ -171,6 +171,9 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
                 desktop.refresh();
             }
             refreshMini();   // 30s 一次兜底扫描；播放态变化有 MediaController 回调即时刷
+            // 周期自愈：应用中途把新 activity 落到默认屏（盖住桌面=返回也没用）时，
+            // 30s 内搬回虚拟屏。onResume 也会立即跑一次。
+            if (pip != null) pip.selfHealPublic();
             ui.postDelayed(this, 30_000L);
         }
     };

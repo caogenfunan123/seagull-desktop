@@ -53,7 +53,10 @@ public final class MirrorHost {
         sp.edit().putString("mirror_pkg" + which, "").apply();
         if (pkg != null && !pkg.isEmpty()) {
             final String p = pkg;
-            new Thread(() -> Caps.exec("am force-stop " + p), "pip-clear" + which).start();
+            new Thread(() -> {
+                Caps.exec("am force-stop " + p);
+                RootOps.resetCompat(p);   // 清空槽 = 还原兼容设置，别污染主屏行为
+            }, "pip-clear" + which).start();
         }
         Log.i(TAG, "清空槽 " + which + "（" + pkg + "）");
     }

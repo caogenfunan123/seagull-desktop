@@ -93,13 +93,21 @@ public final class RootOps {
             Log.w(TAG, "launchOnDisplay: 找不到 " + pkg + " 的启动组件");
             return false;
         }
+        // 【坑 #5】am start 对已在运行的应用会静默投递到主屏实例：singleTask 复用
+        // display 0 上的老栈，画中画黑屏、手机屏反被应用盖住（"有的软件跳转到
+        // 应用界面，返回桌面也显示不了"）。先 force-stop 砍掉主屏实例再起。
+        String killOut = Caps.exec("am force-stop " + pkg);
+        Log.i(TAG, "部署前 force-stop " + pkg + " -> "
+                + (killOut == null ? "无回显" : killOut.trim()));
         PrivClient.init(ctx);
         if (PrivClient.launch(displayId, comp, LAUNCH_FLAGS_INT)) {
             Log.i(TAG, "launchOnDisplay[" + pkg + "] 走守护进程成功 -> display " + displayId);
+            relaxCompat(pkg);
             return true;
         }
         if (launchViaApi(ctx, comp, displayId)) {
             Log.i(TAG, "launchOnDisplay[" + pkg + "] 走 API 成功 -> display " + displayId);
+            relaxCompat(pkg);
             return true;
         }
         String out = Caps.exec("am start --user 0 --display " + displayId
@@ -107,7 +115,36 @@ public final class RootOps {
         boolean ok = out != null && !out.contains("Error") && !out.contains("Exception");
         Log.i(TAG, "launchOnDisplay " + comp + " -> display " + displayId + " ok=" + ok
                 + " " + (out == null ? "" : out.trim()));
+        if (ok) relaxCompat(pkg);
         return ok;
+    }
+
+    /**
+     * 让应用在虚拟屏里铺满画布（高德地图这类）：
+     *  · FORCE_RESIZE_APP —— 不吃 letterbox 兼容模式（小屏/怪宽高比下应用
+     *    渲染成手机尺寸居中留黑边，就是"没办法铺满全屏幕"的直接原因）；
+     *  · NEVER_FIX_ORIENTATION —— 别锁死 manifest 里的 screenOrientation，
+     *    跟着虚拟屏方向转，否则竖屏应用塞横屏画布左右留黑边。
+     * 命令缺省（老 ROM 没有 am compat）时只记日志，不影响部署。
+     * 仅后台线程调用。
+     */
+    public static void relaxCompat(String pkg) {
+        for (String change : new String[] {"FORCE_RESIZE_APP", "NEVER_FIX_ORIENTATION"}) {
+            String out = Caps.exec("am compat enable " + change + " " + pkg);
+            boolean ok = out != null && !out.toLowerCase().contains("error")
+                    && !out.toLowerCase().contains("exception")
+                    && !out.toLowerCase().contains("unknown");
+            Log.i(TAG, "am compat enable " + change + " " + pkg + " ok=" + ok
+                    + " " + (out == null ? "无回显" : out.trim()));
+        }
+    }
+
+    /** 清空某槽时还原兼容设置，别把主屏上这个应用的行为也永久改掉。 */
+    public static void resetCompat(String pkg) {
+        if (pkg == null || pkg.isEmpty()) return;
+        String out = Caps.exec("am compat reset " + pkg);
+        Log.i(TAG, "am compat reset " + pkg + " -> "
+                + (out == null ? "无回显" : out.trim()));
     }
 
     private static boolean launchViaApi(Context ctx, String comp, int displayId) {

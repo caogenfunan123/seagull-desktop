@@ -221,6 +221,13 @@
 - [ ] 用户验收：单画布焦点切换跟手、空态按钮弹选择器、MiniPlayer 三键控音乐/双场景点击；切分割比例后 VD 尺寸变化
 - [ ] **下一批**：DiPlay 推流接入（StreamCanvasSource 写解码帧 + ScalingTransformer 画布像素→iPhone 分辨率）、多指中继补缩放链自检、默认权重预设 7:3/3:7
 
+### P2-9 批次 N 三个回归修复（选择器 / 高德铺满 / 应用跳主屏）✅ 代码已写，CI 待验（批次 O）
+- [x] **选择不了应用**：卡内 SurfaceView `setClickable(true)` 吞掉整块画布触摸（长按/空态按钮全失效）→ SurfaceView 保持不可点击，触摸统一回卡容器；空态大按钮补 `setOnClickListener`（已知坑 §16）
+- [x] **失焦 UP 外泄**：非焦点画布第一下只切焦点后，UP 仍被注进刚失焦的 App（地图里多点一下）/ 空画布顺带弹选择器 → `armed[w]` 门闩：仅 DOWN 时即焦点的画布才放行后续事件
+- [x] **高德铺不满**：小尺寸怪宽高比 VD 上应用走 letterbox 兼容模式，按手机尺寸渲染居中留黑边 → 部署成功后 `am compat enable FORCE_RESIZE_APP + NEVER_FIX_ORIENTATION <pkg>`，清空槽 `am compat reset`
+- [x] **应用跳主屏**：`launchOnDisplay` 从未 force-stop（已知坑 #5），`am start` 对已在运行应用静默投递主屏实例 → 部署前先 `am force-stop`；`selfHeal()`（目标在主屏用守护进程 moveRootTaskToDisplay 搬回）加进 30s tick 周期跑
+- [ ] 用户验收：空画布点大按钮弹选择器、长按已选画布换应用；高德铺满画布（无黑边）；应用不再跳到手机主屏；若有残留回传 logcat（SeagullPipBoard 焦点切换 / SeagullRootOps ensureOnDisplay / am compat 日志）
+
 ---
 
 ## 明确不做
@@ -258,6 +265,20 @@
     `displayId=` 字样，看到它就切段会把同一个 stack 后面的 task 行切丢。
     正确口径：`displayId=N` 的 stack 自身成段头，`stackId=` → `taskId=` → `*TaskRecord{}` /
     `topActivity=` 依次归属当前段（见 `StackScan` + `StackListCheck` 12 项）。
+13. **SurfaceView 塞进 View 卡里绝对不能 `setClickable(true)`** —— 一旦可点击，
+    它会在 dispatchTouchEvent 最前面判定可点击并吞掉整块区域的触摸，宿主的
+    长按/空态按钮/触摸转发全死（批次 N 选择器失效就是这个）。SurfaceView 保持
+    不可点击，所有触摸收在卡容器的 OnTouchListener。
+14. **失焦画布的第一下触摸只切焦点，后续事件也要拦** —— 只拦 DOWN 是不够的：
+    同一手势的 UP 会顺着 `slot.onTouch(e)` 被注入刚失焦的 App（凭空多点一下），
+    空画布还会顺带弹选择器。用 `armed[w]` 门闩：DOWN 时即焦点才放行 MOVE/UP。
+15. **`am start` 搬屏前必须先 `am force-stop <pkg>`**（已知坑 #5 的执行）——
+    `launchOnDisplay` 若不做，singleTask 应用会复用主屏老栈，画中画黑屏、
+    手机主屏反被应用盖住（"返回桌面也显示不了"）。见批次 O。
+16. **小尺寸 / 怪宽高比虚拟屏上应用会 letterbox** —— 按手机尺寸渲染居中留黑边
+    （"高德铺不满"）。root `am compat enable FORCE_RESIZE_APP <pkg>` +
+    `am compat enable NEVER_FIX_ORIENTATION <pkg>` 解掉；`am compat reset <pkg>`
+    在清空槽时还原，别污染主屏。
 
 ---
 

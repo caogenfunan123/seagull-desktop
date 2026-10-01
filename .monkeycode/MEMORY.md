@@ -88,3 +88,14 @@ Entries discovered by the Agent during task execution should follow this format:
   - ACTION_CANCEL 精准送进画中画 App 只有一条路：守护中继通道（TouchForward DaemonSink）；root `input` 命令通道的 swipe 手势不可收回
   - MediaSessionManager.getActiveSessions 要求调用方是已启用的通知监听器——MediaListenerService 正合适，MiniPlayer 数据源复用它，不另起服务不加权限
   - SensorManager.TYPE_LIGHT 是公开 API 且不需要权限，环境光三档遮罩用它，不用 SensorPrivacyManager
+
+[Project Knowledge Summary]
+- Date: 2026-10-01
+- Context: Discovered by Agent while fixing user-reported regression "两个画中画都选择不了应用/高德铺不满/应用跳主屏"（批次 O）
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - SurfaceView 放进 View 卡（FrameLayout）里时绝不能 setClickable(true)：它在 dispatchTouchEvent 最前判定可点击并吞掉整块区域触摸，宿主的长按/空态按钮/转发全死；SurfaceView 保持不可点击，触摸收在卡容器 OnTouchListener
+  - 失焦画布"第一下只切焦点"必须连后续 MOVE/UP 一起拦（armed[w] 门闩），否则 UP 被注入刚失焦的 App（地图里凭空多点一下）
+  - am start --display 搬屏前必须 am force-stop <pkg>（已知坑 #5 的执行）：否则 singleTask 应用复用主屏老栈，画中画黑屏且主屏被应用盖住
+  - 应用在小尺寸/怪宽高比虚拟屏 letterbox（按手机尺寸渲染居中留黑边）：root am compat enable FORCE_RESIZE_APP <pkg> + am compat enable NEVER_FIX_ORIENTATION <pkg>，清槽时 am compat reset
+  - ensureOnDisplay（守护进程 moveRootTaskToDisplay 把落在主屏的目标搬回虚拟屏）除了 onResume 要加进 30s tick 周期跑

@@ -580,3 +580,50 @@ describe）全过。VD 常驻、部署串行化等链路与批次 M/L 一致，�
 - 遗留：DiPlay 推流接入时要实现 StreamCanvasSource（解码帧写 Surface）
   + ScalingTransformer（画布像素→iPhone 分辨率），并给多指中继补缩放链
   路的自检；VD 与推流混排的默认权重预设（7:3 / 3:7）下一批做。
+
+## 批次 O — 批次 N 三个回归的修复（选择器 / 高德铺满 / 应用跳主屏）
+
+**目标**：用户拿到批次 N 包实测报三件事，逐一定位并修：
+① 两块画中画都选不了应用；② 高德地图在画布里铺不满；③ 有的软件跳转到
+应用界面、返回桌面也回不来。
+
+**根因与修复**
+
+1. **选择不了应用 = 批次 N 自己写的坑**：`column()` 里给卡内 `SurfaceView`
+   `setClickable(true)`，它变成可点击 child 之后吞掉整块画布的触摸 —— 长按选
+   应用（走卡容器的 GestureDetector）、空态按钮点击全部失效。
+   - 修复：SurfaceView 保持**不可点击**，触摸统一回卡容器 OnTouchListener；
+     空态大按钮补 `setOnClickListener(v -> openPick(w))`（它自己就是可点击
+     child，走自己的分发链）。
+   - **教训加进已知坑**：SurfaceView 设在卡里可以，设 clickable 就会吃掉宿主
+     的触摸回调——这是 SurfaceView 的可点击判定在 dispatchTouchEvent 最前面
+     生效导致的，跟 z-order 无关。
+2. **失焦画布顺手把 UP 注进旧 App**（修 ① 时顺手发现的同源漏洞）：非焦点
+   画布第一下 DOWN 只切焦点后，之后的 UP 仍会走 `s.onTouch(e)` 被注入刚失焦
+   的 App（地图里凭空多点一下），空画布还会顺带弹出选择器。
+   - 修复：`armed[w]` 门闩——只有 DOWN 时就是焦点的画布，本手势后续的
+     MOVE/UP/长按/选应用才放行。
+3. **高德铺不满 = letterbox 兼容模式**：小尺寸 + 怪宽高比的虚拟屏上，应用按
+   手机尺寸渲染再居中留黑边（`setDisplayId` 那套独立分辨率被拒之后的可见表现）。
+   - 修复：部署成功后 root 执行 `am compat enable FORCE_RESIZE_APP <pkg>`
+     + `am compat enable NEVER_FIX_ORIENTATION <pkg>`（前者取消 letterbox，
+     后者别锁 manifest 的 screenOrientation，跟着虚拟屏方向转）。清空槽时
+     `am compat reset <pkg>` 还原，不污染主屏。
+4. **应用跳主屏 = 已知坑 #5 没被执行**：`launchOnDisplay` 从未 force-stop，
+   `am start` 对已在主屏运行的应用会静默投递到主屏实例（singleTask 复用），
+   应用直接盖住桌面 → "返回桌面也显示不了"。
+   - 修复：部署前先 `am force-stop <pkg>` 再起；另外把 `selfHeal()`
+     （`ensureOnDisplay`：目标落在主屏就用守护进程 moveRootTaskToDisplay
+     搬回）从只在 onResume 跑，加到 30s tick 里周期跑。
+
+**验证**：typecheck.sh 通过。三条修复都是命令链 + 触摸分发层的确定性修改，
+没有需要真机才能看结果的新链路（am compat / force-stop 缺命令时只记日志）。
+
+**复盘**
+
+- 做错：批次 N 的"卡片化"重构把触摸入口搬到卡容器时，顺手给 SurfaceView
+  加了 clickable（无效的多余行），直接断掉选择应用入口——**新写触摸层必须
+  自检"空画布能弹选择器"这一条**，已经连续两个批次在这栽跟头。
+- 做对：把 ① 和"失焦 UP 外泄"分开修，armed 门闩一次性把两个洞都堵住。
+- 决策：letterbox 用 `am compat` 而不是去要系统签名 API（公开版拿不到），
+  命令失败只是日志；`am compat` 对主屏同包也生效，所以 clear 时 reset。
