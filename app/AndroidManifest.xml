@@ -55,6 +55,15 @@
                 <category android:name="android.intent.category.HOME" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <!--
+                又当默认桌面（HOME）又给个图标进 app：没有这一条，装完只在系统「默认桌面」
+                选择列表里出现，应用抽屉里不显示，想点进设置只能按 Home 键。
+                HOME 与 LAUNCHER 两个 intent-filter 共存是允许的，默认桌面功能不受影响。
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
         </activity>
 
         <activity

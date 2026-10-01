@@ -74,7 +74,7 @@ jobs:
         run: |
           set -e
           VER=$("$ANDROID_HOME/build-tools/34.0.0/aapt2" dump badging app/out/SeagullLauncher.apk \
-            | sed -nE "s/.*versionName='([^']+)'.*/\1/p" | head -1)
+            | sed -nE "s/^package: .*versionCode='[^']*' versionName='([^']+)'.*/\1/p" | head -1)
           [ -n "$VER" ] || { echo "读不到 versionName"; exit 1; }
           TAG="v$VER"
           if gh release view "$TAG" >/dev/null 2>&1; then
