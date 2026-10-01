@@ -185,7 +185,7 @@
 - [x] VD flags 修正 `PUBLIC|AUTO_MIRROR`（去掉 `OWN_CONTENT_ONLY`=黑屏根因）
 - [x] 守护进程在位时触摸改原始事件中继（多指、零命令开销）
 - [ ] 真机验证：SELinux 是否放行 abstract socket、KernelSU su 域、ROM 是否裁剪 `moveRootTaskToDisplay`
-- [ ] 复核 `findTaskId` 的 dumpsys 口径（已知坑 #11）
+- [x] 复核 `findTaskId` 的 dumpsys 口径（已知坑 #11）—— 段头归属，`TaskScan` + `DumpParseCheck` 14 项
 
 ---
 
@@ -218,10 +218,8 @@
    每次重读都追加一遍，越用越胖。
 10. **手势导航条占屏幕底部约 40px** —— 布局要留底部 inset。
 11. **`dumpsys activity activities` 的 display 归属**：按 `Display #N` 段头切分，
-    后续 `* Task{...}` 行归当前 N；Task 行本身**没有** `displayId=` 字段。
-10. **手势导航条占屏幕底部约 40px** —— 布局要留底部 inset。
-11. **`dumpsys activity activities` 的 display 归属**：按 `Display #N` 段头切分，
-    后续 `* Task{...}` 行归当前 N；Task 行本身**没有** `displayId=` 字段。
+    后续 `* Task{...}` 行归当前 N；Task 行本身**没有** `displayId=` 字段（少数 ROM 例外，
+    `TaskScan` 两种都认）。
 
 ---
 

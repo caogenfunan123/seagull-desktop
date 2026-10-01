@@ -36,7 +36,7 @@
 app/
   AndroidManifest.xml          权限 + 组件注册（新增 Activity/Service 必须在这里登记）
   build.sh                     7 步 APK 构建，环境变量可覆盖（CI 用）
-  selfcheck/                   纯 JVM 自检（QuickbarCheck / LrcCheck）
+  selfcheck/                   纯 JVM 自检（QuickbarCheck / LrcCheck / PrivCodecCheck / DumpParseCheck）
   src/com/seagull/carlauncher/
     BaseActivity.java          公共基类：fontScale + Skin + 方向 + model
     LauncherModel.java         全量配置单一事实源（最大的文件，改它要小心）
@@ -54,6 +54,7 @@ app/
     TouchForward.java          触摸转发（双通道：守护中继 / input 命令）
     MirrorSlot.java            虚拟屏镜像槽（两块）
     PrivCodec.java             守护进程线协议（纯 JVM，可自检）
+    TaskScan.java              dumpsys 扫 task：display 归属看段头（纯 JVM，可自检）
     PrivClient.java            守护进程客户端（拉起/重连/降级）
     RootMain.java              app_process 守护进程入口（反射隐藏 API）
     Caps.java / SysOps.java / RootOps.java   能力探测 / 系统操作 / root 通道

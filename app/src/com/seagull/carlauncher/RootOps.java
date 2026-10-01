@@ -171,35 +171,31 @@ public final class RootOps {
     }
 
     /**
-     * 确认目标是否真的落在虚拟屏上（TaskMover 同款判定：查 task 的 displayId）。
+     * 确认目标是否真的落在虚拟屏上（TaskMover 同款判定：查 task 的 display 归属）。
+     * 解析口径见 TaskScan（坑 #11：Task 行没有 displayId=，归属看段头）。
      * 返回 taskId，未找到 -1。
      */
     public static int findTaskId(String pkg, int displayId) {
         String out = Caps.exec("dumpsys activity activities");
-        if (out == null) return -1;
-        int fallback = -1;
-        for (String line : out.split("\n")) {
-            if (!line.contains("Task{") || !line.contains(pkg)) continue;
-            java.util.regex.Matcher m =
-                    java.util.regex.Pattern.compile("taskId=(\\d+)|#(\\d+)").matcher(line);
-            int id = -1;
-            if (m.find()) id = Integer.parseInt(m.group(1) != null ? m.group(1) : m.group(2));
-            if (id < 0) continue;
-            if (displayId > 0 && line.contains("displayId=" + displayId)) return id;
-            if (fallback < 0) fallback = id;
-        }
-        return displayId > 0 ? -1 : fallback;
+        return out == null ? -1 : TaskScan.findTaskId(out, pkg, displayId);
     }
 
     /**
      * TaskMover：把任务迁移到目标 display。
      * 优先走守护进程的 moveRootTaskToDisplay 反射（Android 14+ 有这个隐藏方法，
      * root uid 调用直接过权限检查）；失败回退 `am task move-task` 命令链。
+     * dumpsys 只拉一次：既定位 task，也确认它不在目标屏上（已在就是 no-op，
+     * 报清楚，别让用户以为搬成功了）。
      */
     public static String moveTaskToDisplay(Context ctx, String pkg, int displayId, String anchorPkg) {
         if (!Caps.hasRoot()) return "无 root";
-        int taskId = findTaskId(pkg, -1);
+        String dump = Caps.exec("dumpsys activity activities");
+        if (dump == null) return "dumpsys 无回显";
+        int taskId = TaskScan.findTaskId(dump, pkg, -1);
         if (taskId < 0) return "找不到 " + pkg + " 的 task";
+        if (TaskScan.findTaskId(dump, pkg, displayId) == taskId) {
+            return "task=" + taskId + " 已在 display " + displayId + "，无需搬";
+        }
         PrivClient.init(ctx);
         if (PrivClient.move(taskId, displayId)) {
             return "task=" + taskId + " -> display " + displayId + " : 守护进程反射成功";

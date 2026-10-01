@@ -325,3 +325,36 @@ SecurityException 拒过一次，守护进程路径是否绕过待真机确认�
 
 
 
+---
+
+### 批次 J 补：dumpsys 口径复核（已知坑 #11）
+
+**目标**：复核遗留项 ③ —— `findTaskId` 按 `displayId=` 在 Task 行里找屏，
+与坑 #11（Task 行没有这个字段，归属看段头）矛盾，`moveTaskToDisplay`
+搬的 task 可能不是你以为的那个。
+
+**改动**
+
+- 新增 `TaskScan.java`：从 `dumpsys activity activities` 文本扫 task 的纯 JVM
+  解析层（零 android import，模式照 PrivCodec）。display 归属改按
+  `Display #N` 段头切分；少数 ROM 的 Task 行自带 `displayId=` 的也认，
+  两种口径都过。只认 `* Task{}` 行，`Task id #77` 详情行不认。
+- `RootOps.moveTaskToDisplay`：dumpsys 只拉一次 —— 先定位任意实例，
+  再确认目标 task 不在目标屏上（已在就是 no-op，如实报「已在」，别让人
+  以为搬成功了）。同包两个 display 各有一个 task 时，严格模式不搬错
+  实例（displayId>0 找不到就 -1，绝不回退）。
+- 新增 `DumpParseCheck` 14 项自检，现场取材：同包在主屏 #77 和虚拟屏
+  #88 各活一个 task —— 段头归属错一步，搬的就是另一个实例。
+- TODO 坑 #11 补一句「少数 ROM 例外，TaskScan 两种都认」；顺手删了
+  已知坑里重复粘贴的 10/11 两条。
+
+**验证**：`typecheck.sh` 通过；`DumpParseCheck` 14 项、`PrivCodecCheck`
+30 项、`LrcCheck` 15 项均通过。
+
+**复盘**
+
+- 做对：解析层继续放纯 JVM 类里，「同一包在两个屏各有一个 task」这种
+  最容易骗过肉眼的边界，用真实格式的 fixture 钉死成断言，不用等真机。
+- 决策：`moveTaskToDisplay` 的 taskId 仍取「第一个」而不是「主屏上的」
+  —— 语义是「把这个包现有的 task 搬到目标屏」，搬之前加已在判断兜底；
+  真要按屏挑，TaskScan 的严格模式已经现成。
