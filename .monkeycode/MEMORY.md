@@ -121,3 +121,14 @@ Entries discovered by the Agent during task execution should follow this format:
   - 每秒一跳的 tick（歌词/天气）读配置必须用 LauncherModel(ctx, false) 只读存档：全量构造跑 loadApps 会对每个已装应用做一次 loadLabel IPC
   - targetSdk 24+ 发安装 intent 必须走 content:// URI：本项目无 androidx，自绘 SeagullFileProvider（files/ 内路径 canonical 化防穿越）即可
   - 本地验证三件套：bash /tmp/opencode/typecheck.sh（javac 全量）；自检 javac -cp android.jar 后 java -ea 逐个跑（TransformCheck/StackListCheck/PrivCodecCheck/DumpParseCheck/LrcCheck/TrustedFlagsCheck，批次 P 共 153 项）；APK 构建在 CI（.github/workflows/build-apk.yml），本地不签
+
+[Project Knowledge Summary]
+- Date: 2026-10-01
+- Context: Discovered by Agent while fixing user-reported dual-canvas bugs (batch Q)
+- Category: Troubleshooting & Debugging
+- Instructions:
+  - 一个 MediaProjection 会话只能建一块虚拟屏：两块画布共用一份会话时，第二块 createVirtualDisplay 的 VD 会把第一块画面"复印"过来（用户看到"画布里套着画布"）。多画布必须用同一次授权结果多次 getMediaProjection 取多份会话
+  - VD 黑边先查密度再看尺寸：设备 densityDpi（~440）传给 366px 宽小屏 = ~85dp 视口，应用按小屏版式/触发 size compat 居中留黑边；把画布像素折成 ~280dp 基准反算 dpi 即可铺满。判定法：同一 VD 跑时钟 App，铺满=VD 参数没问题，不铺满=ROM 层 letterbox
+  - dumpsys display | grep -i virtual 数虚拟屏条数是"两块画布是否真的独立 VD"的唯一硬性验收（seagull-pip1/pip2 各一条）
+  - SurfaceView 上的覆盖层控件一律克制：非焦点画布只留环境光遮罩+焦点描边，用户明确反感"点击接管"这类提示控件
+  - 共享受限资源（录屏投影/相机/麦克风）在多槽架构里必须逐槽独占，写完两槽代码要自问"这个 session 允许几个实例"

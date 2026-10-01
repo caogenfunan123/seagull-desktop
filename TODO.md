@@ -318,3 +318,11 @@
 | `apksigner` | 签名 | 自动生成 debug keystore |
 | `android.jar` (API 33) | 编译引导类路径 | 放 `libs/` |
 | `zipalign` | 对齐（可选） | 缺失时跳过，apksigner 输出本身已对齐 |
+
+### P2-11 批次 Q 两个画布问题修复（VD 嵌套 / 高德黑边）🟡 代码已写，typecheck 过，真机待验
+- [ ] 用户验收 ①第二画布里套着第一画布：根因是两块画布共用同一个 MediaProjection 会话 —— 一个投影会话只能建一块虚拟屏，第二块 `createVirtualDisplay` 会把第一块的画面"复印"过来。修复见 PipBoard.pollToken（同一次授权结果取两份独立 MediaProjection，proj[1]/proj[2] 各建各 VD）+ 共屏检测网（两槽握同一 displayId 直接拆本槽并留 error 日志）
+  - 验证：双画布各选一个应用，`dumpsys display | grep -i virtual` 应出现 **2 条** seagull-pip1 / seagull-pip2；logcat 抓 `SeagullPipBoard` 两份投影会话就绪
+- [ ] 用户验收 ②高德四周黑边：根因不是 VD 尺寸，是密度（densityDpi≈440 传给 366px 宽小屏 = ~85dp 视口，应用按小屏布局/触发 size compat 居中留黑边）。修复见 PipBoard.dpiFit()：画布像素折成 ~280dp 基准反算 dpi（366px @ ~209dpi），宽高两侧都钳，≥mdpi ≤设备默认；am compat FORCE_RESIZE_APP + NEVER_FIX_ORIENTATION 保持
+  - 验证：两块画布分别跑时钟看是否各自铺满（时钟 = App  laying out normally）；再跑高德，看黑边是否消失。若时钟仍黑边 → 是 ROM 层 letterbox，加 `am compat enable FORCE_RESIZE_APP` 未生效，抓 `dumpsys activity containers | grep -A5 sizeCompat`
+- [ ] 已删「点击接管」TextView 覆盖层（用户：界面只要两个画布，别加多余东西）；非焦点画布只剩环境光遮罩 + 焦点描边
+- [ ] 注意：VD 依赖 TRUSTED 直建（DisplayManager 6 参公开重载，API 33+，角色授予需真机验证）；TRUSTED 失败时走投影路径，两槽各自一份会话
