@@ -6,6 +6,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# 建 release / 覆盖 release 资产要写仓库内容
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -33,6 +37,19 @@ jobs:
             "platforms;android-33" "build-tools;34.0.0" >/dev/null
           echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
 
+      # 签名不一致就装不上（INSTALL_FAILED_UPDATE_INCOMPATIBLE），所以签名密钥走 secret 还原。
+      # 没配 secret 时 build.sh 会现生成一把临时密钥，只适合自己试装。
+      - name: 还原签名密钥
+        env:
+          KS_B64: ${{ secrets.SEAGULL_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            printf '%s' "$KS_B64" | base64 -d > app/debug.keystore
+            echo "用固定签名密钥"
+          else
+            echo "::warning::未配 SEAGULL_KEYSTORE_B64，本次为临时密钥，装到已有版本上会签名不一致"
+          fi
+
       - name: 编译 APK
         env:
           SEAGULL_SDK: /home/runner/android-sdk
@@ -47,3 +64,25 @@ jobs:
           name: SeagullLauncher-apk
           path: app/out/SeagullLauncher.apk
           if-no-files-found: error
+
+      # tag = v<apk 里的 versionName>：应用内「检查更新」就是拿 tag 去掉 v 跟本机 versionName 比。
+      # 同一个 tag 反复覆盖资产，固定下载地址 releases/latest/download/SeagullLauncher.apk 永远指向最新包。
+      - name: 挂到 release（免登录固定下载入口）
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          VER=$("$ANDROID_HOME/build-tools/34.0.0/aapt2" dump badging app/out/SeagullLauncher.apk \
+            | sed -nE "s/.*versionName='([^']+)'.*/\1/p" | head -1)
+          [ -n "$VER" ] || { echo "读不到 versionName"; exit 1; }
+          TAG="v$VER"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" app/out/SeagullLauncher.apk --clobber
+            echo "已覆盖 $TAG 的安装包"
+          else
+            gh release create "$TAG" app/out/SeagullLauncher.apk \
+              --title "海鸥桌面 $TAG" \
+              --notes "批次 A~I 的自动构建。免登录下载：https://github.com/$GITHUB_REPOSITORY/releases/latest/download/SeagullLauncher.apk"
+          fi
+          echo "下载地址 https://github.com/$GITHUB_REPOSITORY/releases/latest/download/SeagullLauncher.apk"
