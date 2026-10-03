@@ -12,6 +12,54 @@
 
 ---
 
+## 批次 R — 实验台回灌：CarWithX 建屏三铁律移植 + 锚点 + 缺席重拉
+
+**目标**：把 `seagull-pip-lab`（复刻 CarWithX）在真机验证过的路子回灌主项目，修三个症状：
+两个画中画没铺满、回桌面画中画消失、画布黑屏无人重拉。
+
+**复盘（症状 → 根因 → 修法，全部读代码推出）**
+
+1. **铺不满**：主项目建屏走 `TRUSTED|PUBLIC` 全量 flags（`TrustedFlags.candidateFlags` 组 1），
+   PUBLIC 屏被系统当"第二块真屏"，size-compat/letterbox 决策与私有屏不同路；
+   CarWithX 全家（实验台在用户 Redmi K60 实测）用 flags=0 私有屏出画面。
+   → 建屏顺序改为 ①flags=0 私有屏（零授权零弹窗）→ ②TRUSTED → ③投影兜底；
+   `dpiFit`（批次 Q）保留不动。真机若仍黑边，按 TODO P2-11 口径抓
+   `dumpsys activity containers | grep -A5 sizeCompat` 定位 ROM 层兼容框。
+2. **回桌面消失**：两股根因。
+   a) 应用在画中画里按返回退出后，`RootOps.ensureOnDisplay` 尾部返回
+   "可能已退出"就没人管了 —— 画布永久黑屏（确凿代码级根因）。
+   → `ensureOnDisplay` 改回 `ABSENT` 前缀标记（仅栈解析成功时），新增
+   `MirrorHost.relaunchIfAbsent` 60s 节流重拉；桌面自愈（`healHome`）与
+   画布自愈（`PipBoard.selfHeal`）都接上。
+   b) singleTask 任务被系统拉回主屏：原有 healHome 兜底之外，补 CarWithX
+   锚点 —— 部署建屏成功立即把 `PipAnchorActivity`（新增，空/透明/
+   excludeFromRecents/独立 affinity）起在 VD 上，重钉有稳定落点、
+   空屏不被系统清理。`launchAnchor` 只带 NEW_TASK（幂等复用锚点 task），
+   【绝不能带 MULTIPLE_TASK】否则每次部署叠一个锚点 task。
+   锚点的 "Warning: brought to the front" 是好结果，正向证据判据在此放宽。
+3. **没有持久化**：主项目绑定早有持久化（`PipBoard.savePkg` → prefs
+   `seagull/mirror_pkgN`，`MirrorHost` 进程级持槽，重启后 `deployIfBound` 重建）；
+   该症状来自实验台（复刻版确实没写持久化）。回灌后两版行为一致。
+
+**其他改动**
+
+- `MirrorSlot`：新增 `createPlainVd`（flags=0 私有屏）与 `mode` 诊断字段
+  （"直建(flags=0)" / "TRUSTED" / "投影"）；`describe()` 显示建屏路。
+- `MirrorHost.onProjectionStopped`：只拆 `projectionBased()` 的屏 ——
+  批次 R 起私有屏/TRUSTED 屏与投影无关，投影被撤销不能再误拆它们
+  （旧判定 `!trusted()` 会把私有屏也拆了，这是重排建屏顺序后必须跟着改的一处）。
+- `ensureOnDisplay` 新增双槽护栏：目标在**其他**虚拟屏有同名 task 时不动
+  （否则重拉会 force-stop 掉对槽正在跑的实例，两块画布一起死）。
+
+**验证**：typecheck OK；自检 6 套全过（Transform 54 / StackList 30 / DumpParse 14 /
+Lrc 15 / TrustedFlags 10 / PrivCodec）；真机验收口径见 TODO P2-12。
+
+**遗留**：LSPosed 模块（网易云强制横屏/吞 PiP）仍在实验台，主线是否合并待用户拍板
+（影响包形态：单 APK 变 LSPosed 双体型）；`am compat` 在 HyperOS 上对
+NEVER_FIX_ORIENTATION 的接受度未验证，失败仅记日志。
+
+---
+
 ## 批次 A — P0-3 文件夹闭环 + P0-4 应用搜索
 
 **目标**：长按 A 拖到 B 上生成文件夹；搜索按名称/包名/拼音首字母过滤。

@@ -22,11 +22,15 @@ import android.view.Surface;
  *        → 画面渲染进我们的 SurfaceView → 触摸回注进去。
  *        目标应用真的在这块屏上跑，不是镜像。
  *
- * 建屏两条路（批次 K 起，TRUSTED 优先）：
+ * 建屏三条路（批次 R 起，CarWithX 私有屏直建优先）：
+ *   · flags=0 私有屏直建（批次 R，实验台真机验证）：DisplayManager 公开 8 参重载，
+ *     零授权零弹窗，无投影会话依赖 —— 共用会话/录屏撤销那类故障从根上消失；
  *   · TRUSTED 直建：root 授角色后用 DisplayManager 公开 6 参 createVirtualDisplay
  *     + flag 候选降级 + TRUSTED 位校验 —— Android 14 上任务不被拉回主屏的关键；
  *   · MediaProjection 兜底：普通应用合法拿虚拟屏的正道，无 TRUSTED，
  *     Android 14 上 singleTask 目标可能被拉回主屏（有 ensureOnDisplay 自愈兜底）。
+ * 部署即落锚点（PipAnchorActivity，批次 R）：VD 常驻自家 root task，重钉有落点、
+ * 空屏不被系统清理；应用缺席（画中画里按了返回）由 MirrorHost.relaunchIfAbsent 节流重拉。
  */
 public final class MirrorSlot implements CanvasSource {
 
@@ -41,6 +45,8 @@ public final class MirrorSlot implements CanvasSource {
     private volatile boolean ready;
     /** 批次 K：true = 本次 VD 是 TRUSTED 受信屏（任务才不会被系统拉回主屏）。 */
     private volatile boolean trusted;
+    /** 批次 R：建屏方式（日志/诊断用）。"直建(flags=0)" / "TRUSTED" / "投影"。 */
+    private volatile String mode = "";
     /** 批次 K：true = TRUSTED 直建失败且缺录屏 token，需要先走录屏授权再兜底。 */
     private volatile boolean needsProjection;
     private String lastError = "";
@@ -89,6 +95,8 @@ public final class MirrorSlot implements CanvasSource {
     public boolean ready() { return ready; }
     public boolean trusted() { return trusted; }
     public boolean needsProjection() { return needsProjection; }
+    /** 批次 R：true = 这块屏由 MediaProjection 建出，投影一停屏就死。 */
+    public boolean projectionBased() { return "投影".equals(mode); }
     public String lastError() { return lastError; }
 
     /* ---------------- 全局活跃屏注册表（供抽屉"投到车机屏"用） ---------------- */
@@ -159,38 +167,65 @@ public final class MirrorSlot implements CanvasSource {
         projection = mp;
         needsProjection = false;
         trusted = false;
+        mode = "";
 
-        VirtualDisplay made = createTrustedVd(w, h, dpi, surface);
+        /*
+         * 建屏三路（批次 R 重排，CarWithX 私有屏直建提为首选）：
+         *   ① flags=0 私有屏直建（批次 R，实验台 seagull-pip-lab 在用户真机验证过）：
+         *      DisplayManager 公开 API，零授权零弹窗，无投影会话依赖 —— 批次 Q 那类
+         *      "两槽共用会话"的整类 bug 从根上消失。私有屏只有本进程看得见，
+         *      SurfaceView 恰好是自己的，画中画场景刚好。
+         *   ② TRUSTED 直建（批次 K）：root 授角色后建受信屏，收留 singleTask 任务最稳；
+         *   ③ MediaProjection 兜底：需要录屏授权 token。
+         * ①失败才试②、②失败才试③；每一路的失败原因都留在日志里。
+         */
+        VirtualDisplay made = createPlainVd(w, h, dpi, surface);
         if (made != null) {
             vd = made;
-            trusted = true;
-            projection = null;   // TRUSTED 屏不靠 MediaProjection
-            Log.i(TAG, "[" + name + "] TRUSTED 虚拟屏建成 " + w + "x" + h);
+            mode = "直建(flags=0)";
+            projection = null;   // 私有屏与投影无关
+            Log.i(TAG, "[" + name + "] 私有屏直建成功 flags=0 " + w + "x" + h);
         } else {
-            // 兜底：MediaProjection 路径（需要录屏授权 token）
-            if (mp == null) {
-                needsProjection = true;
-                lastError = "TRUSTED 屏不可用且无录屏授权（兜底路径缺 token）";
-                return false;
+            made = createTrustedVd(w, h, dpi, surface);
+            if (made != null) {
+                vd = made;
+                trusted = true;
+                mode = "TRUSTED";
+                projection = null;   // TRUSTED 屏不靠 MediaProjection
+                Log.i(TAG, "[" + name + "] TRUSTED 虚拟屏建成 " + w + "x" + h);
+            } else {
+                // 兜底：MediaProjection 路径（需要录屏授权 token）
+                if (mp == null) {
+                    needsProjection = true;
+                    lastError = "私有屏与 TRUSTED 直建均失败，且无录屏授权（兜底路径缺 token）";
+                    return false;
+                }
+                Log.w(TAG, "[" + name + "] 直建两路都失败，回落 MediaProjection 路径");
+                try {
+                    vd = mp.createVirtualDisplay(
+                            "seagull-" + name, w, h, dpi,
+                            TrustedFlags.projectionFallbackFlags(),
+                            surface, null, mainHandler);
+                    mode = "投影";
+                } catch (Throwable t) {
+                    lastError = "createVirtualDisplay 失败: " + t;
+                    Log.e(TAG, lastError, t);
+                    return false;
+                }
+                if (vd == null) { lastError = "createVirtualDisplay 返回 null"; return false; }
             }
-            Log.w(TAG, "[" + name + "] TRUSTED 直建失败，回落 MediaProjection 路径");
-            try {
-                vd = mp.createVirtualDisplay(
-                        "seagull-" + name, w, h, dpi,
-                        TrustedFlags.projectionFallbackFlags(),
-                        surface, null, mainHandler);
-            } catch (Throwable t) {
-                lastError = "createVirtualDisplay 失败: " + t;
-                Log.e(TAG, lastError, t);
-                return false;
-            }
-            if (vd == null) { lastError = "createVirtualDisplay 返回 null"; return false; }
         }
 
         displayId = vd.getDisplay() != null ? vd.getDisplay().getDisplayId() : -1;
         if (displayId < 0) { lastError = "拿不到虚拟屏 id"; teardownVd(); return false; }
 
         // 建屏成功即注册（触摸/抽屉据此找得到这块屏），不必等 Surface
+        register(displayId);
+
+        // 锚点先落（批次 R，复刻 CarWithX ensureAnchor）：VD 上常驻自家 root task，
+        // 重钉有稳定落点、系统不当空屏清理。失败不阻断部署（目标应用照常起）。
+        try { RootOps.launchAnchor(ctx, displayId); }
+        catch (Throwable t) { Log.w(TAG, "[" + name + "] 锚点启动失败（不阻断）: " + t); }
         register(displayId);
 
         boolean ok = RootOps.launchOnDisplay(ctx, pkg, displayId);
@@ -212,6 +247,26 @@ public final class MirrorSlot implements CanvasSource {
         Log.i(TAG, "[" + name + "] " + pkg + " 已部署到 displayId=" + displayId + " " + w + "x" + h
                 + " trusted=" + trusted + " ready=" + ready);
         return true;
+    }
+
+    /**
+     * CarWithX 私有屏直建（批次 R 首选路）：DisplayManager 公开 8 参重载，
+     * flags=0 = PRIVATE —— 不需要角色、不需要录屏授权，本进程对这块屏有完全控制权。
+     * 实验（seagull-pip-lab）在用户真机 Redmi K60 / HyperOS Android 14 上验证：
+     * 这条路能建屏、`am start --display` 能进、应用画面能渲染进 SurfaceView。
+     * 失败（ROM 拒绝/异常）返回 null，调用方走 TRUSTED 路。
+     */
+    private VirtualDisplay createPlainVd(int w, int h, int dpi, Surface surface) {
+        android.hardware.display.DisplayManager dm =
+                (android.hardware.display.DisplayManager)
+                        ctx.getSystemService(Context.DISPLAY_SERVICE);
+        if (dm == null) return null;
+        try {
+            return dm.createVirtualDisplay("seagull-" + name, w, h, dpi, surface, 0, null, null);
+        } catch (Throwable t) {
+            Log.w(TAG, "[" + name + "] 私有屏直建被拒: " + t);
+            return null;
+        }
     }
 
     /**
@@ -320,13 +375,13 @@ public final class MirrorSlot implements CanvasSource {
         }
     }
 
-    /** 诊断行：给 UI 显示"虚拟屏到底建没建、是不是受信屏"。 */
+    /** 诊断行：给 UI 显示"虚拟屏到底建没建、走的是哪条建屏路"。 */
     public String describe() {
         if (displayId <= 0) {
             return "未部署" + (lastError.isEmpty() ? "" : "（" + lastError + "）");
         }
         return (ready ? "已就绪" : "已建屏未挂载")
-                + (trusted ? " · TRUSTED 受信屏" : " · 投影屏(非受信)")
+                + " · " + (mode.isEmpty() ? "?" : mode)
                 + " · displayId=" + displayId
                 + (lastPkg.isEmpty() ? "" : " · " + lastPkg);
     }

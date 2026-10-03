@@ -252,7 +252,49 @@ public final class RootOps {
         return g == null ? "未尝试" : (g ? "已授予 COMPANION_DEVICE_APP_STREAMING" : "授予失败");
     }
 
+    /* ---------------- 画中画锚点（批次 R，复刻 CarWithX PipAnchorActivity） ---------------- */
+
+    /**
+     * 起锚点到指定虚拟屏：部署建屏成功后立即调，让 VD 上常驻一个我们自己的 root task。
+     *   1. 重钉落点稳定（ensureOnDisplay/move-task 有 stack 可落）；
+     *   2. VD 永远有活任务，系统不会当空屏清理；
+     *   3. `am stack list` 里锚点行 = 这块屏活着的直接判据。
+     * flags 只带 NEW_TASK（0x10000000）：锚点 task 已存在时复用（幂等）。
+     * 【绝不能带 MULTIPLE_TASK】否则每次部署都叠一个新锚点 task，最终撑爆 VD。
+     * 对目标应用那套"Warning=失败"的正向证据判据在这里放宽：
+     * "Warning: ... brought to the front" = 锚点还活着 = 好结果。
+     */
+    public static boolean launchAnchor(Context ctx, int displayId) {
+        // ① 公开 API：自家 Activity 起自家虚拟屏，多数 ROM 直接放行
+        try {
+            Intent i = new Intent(ctx, PipAnchorActivity.class);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            android.app.ActivityOptions opts = android.app.ActivityOptions.makeBasic();
+            opts.setLaunchDisplayId(displayId);
+            ctx.startActivity(i, opts.toBundle());
+            Log.i(TAG, "锚点走 API -> display " + displayId);
+            return true;
+        } catch (Throwable t) {
+            Log.w(TAG, "锚点 API 启动被拒，落 su: " + t);
+        }
+        String out = Caps.exec("am start --user 0 --display " + displayId
+                + " -f 0x10000000 -n " + ctx.getPackageName()
+                + "/" + PipAnchorActivity.class.getName());
+        boolean ok = out != null && !out.contains("Error") && !out.contains("Exception")
+                && !out.contains("Abort");
+        Log.i(TAG, "锚点走 su -> display " + displayId + " ok=" + ok
+                + (out == null ? "" : " " + out.trim()));
+        return ok;
+    }
+
     /* ---------------- 目标自愈（批次 K，carlink m10/m12 同款） ---------------- */
+
+    /**
+     * ensureOnDisplay 返回该前缀 = 栈结构解析成功且目标应用在主屏、目标屏、
+     * 其他虚拟屏上都不存在（在画中画里按返回退出了，或崩了）。
+     * 调用方可节流重拉；解析失败类返回绝不带此前缀（m12 红线：解析不出绝不动）。
+     */
+    public static final String ABSENT = "absent:";
 
     /**
      * singleTask 应用（网易云这类）在虚拟屏内部跳转时，新 activity 会落到默认屏，
@@ -270,9 +312,17 @@ public final class RootOps {
         if (out == null) return "am stack list 无回显（su 不可用）";
         if (StackScan.segments(out).isEmpty()) return "am stack list 输出无法解析，跳过自愈";
         if (StackScan.isRunningOnDisplay(out, pkg, displayId)) return "目标已在虚拟屏";
+        // 双槽绑同一个应用时，另一个槽的屏上会有同名 task：那是别人的实例，绝不能动
+        // （否则重拉会 force-stop 掉对槽正在跑的应用，两块画布一起死）。
+        for (Integer d : StackScan.segments(out).keySet()) {
+            if (d == null || d == 0 || d == displayId) continue;
+            if (StackScan.findTaskOnDisplay(out, pkg, d) != null) {
+                return "目标任务在其他虚拟屏 d=" + d + "，不动";
+            }
+        }
         // 源 = 主屏(display 0)上的目标任务；搬到目标屏
         StackScan.TaskRef src = StackScan.findTaskOnDisplay(out, pkg, 0);
-        if (src == null) return "目标任务不在主屏也不在虚拟屏（可能已退出）";
+        if (src == null) return ABSENT + "目标任务不在主屏也不在虚拟屏（可能已退出）";
         PrivClient.init(ctx);
         if (PrivClient.move(src.taskId, displayId)) {
             return "已搬回虚拟屏（守护进程 moveRootTaskToDisplay " + src + "）";

@@ -326,3 +326,11 @@
   - 验证：两块画布分别跑时钟看是否各自铺满（时钟 = App  laying out normally）；再跑高德，看黑边是否消失。若时钟仍黑边 → 是 ROM 层 letterbox，加 `am compat enable FORCE_RESIZE_APP` 未生效，抓 `dumpsys activity containers | grep -A5 sizeCompat`
 - [ ] 已删「点击接管」TextView 覆盖层（用户：界面只要两个画布，别加多余东西）；非焦点画布只剩环境光遮罩 + 焦点描边
 - [ ] 注意：VD 依赖 TRUSTED 直建（DisplayManager 6 参公开重载，API 33+，角色授予需真机验证）；TRUSTED 失败时走投影路径，两槽各自一份会话
+
+### P2-12 批次 R 实验台回灌（CarWithX 建屏三铁律 + 锚点 + 缺席重拉）🟡 代码已写，typecheck/自检过，真机待验
+- [ ] 用户验收 ①铺满：建屏首选已改为 flags=0 私有屏直建（日志 `私有屏直建成功 flags=0`）；dpiFit 保持。验证：两块画布分别跑时钟看铺满；仍黑边则抓 `dumpsys activity containers | grep -A5 sizeCompat` + `logcat -s SeagullMirror`
+- [ ] 用户验收 ②回桌面不再消失：锚点常驻（`logcat -s SeagullAnchor` 应见 `锚点就位 task=N displayId=M`）；`dumpsys display | grep -i virtual` 仍 2 条；回桌面 30s 内被拉回主屏的应用自动搬回（`桌面自愈 槽 N: 目标已在虚拟屏`）
+- [ ] 用户验收 ③画布黑屏自愈：在画中画里按返回退出应用，60s 内画布应自动重拉该应用（`logcat -s SeagullMirrorHost` 见 `应用缺席 → 重拉`）；重拉 60s 节流，连续退出只补拉一次
+- [ ] 双槽护栏：两个槽绑同一个应用时，自愈绝不动对槽实例（日志 `目标任务在其他虚拟屏 d=N，不动`）
+- [ ] 投影撤销不误拆：录屏授权撤销后，私有屏/TRUSTED 屏的画中画应继续活着（只有投影屏才拆）
+- [ ] 授权链退化确认：flags=0 直建成功时全程不应弹录屏授权框（这是本批次的 UX 核心收益）

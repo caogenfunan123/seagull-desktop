@@ -2,6 +2,7 @@ package com.seagull.carlauncher;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.SystemClock;
 import android.util.Log;
 
 import java.util.HashMap;
@@ -26,6 +27,8 @@ public final class MirrorHost {
 
     private static final Map<String, MirrorSlot> SLOTS = new HashMap<>();
     private static long lastHeal;
+    private static final long RELAUNCH_MIN_INTERVAL_MS = 60_000;
+    private static final long[] lastRelaunch = new long[3];
 
     private MirrorHost() {}
 
@@ -62,13 +65,13 @@ public final class MirrorHost {
     }
 
     /**
-     * 录屏被系统撤销：受信屏不依赖投影，继续用；投影屏的 VD 已死，
-     * 拆掉免得屏上任务倒回主屏冒全屏。
+     * 录屏被系统撤销：只拆真正由投影建出的屏（批次 R 起私有屏/TRUSTED 屏与
+     * 投影无关，继续用）；投影屏的 VD 已死，拆掉免得屏上任务倒回主屏冒全屏。
      */
     public static synchronized void onProjectionStopped(Context ctx) {
         for (int i = 1; i <= 2; i++) {
             MirrorSlot s = slot(i);
-            if (s == null || s.trusted()) continue;
+            if (s == null || !s.projectionBased()) continue;
             if (s.displayId() > 0) {
                 Log.w(TAG, "槽 " + i + " 是投影屏且投影已停，拆屏");
                 s.teardown();
@@ -97,8 +100,32 @@ public final class MirrorHost {
             final int slotNo = i;
             new Thread(() -> {
                 String out = RootOps.ensureOnDisplay(ctx.getApplicationContext(), pkg, s.displayId());
+                if (out != null && out.startsWith(RootOps.ABSENT)) {
+                    relaunchIfAbsent(ctx, slotNo, pkg, s.displayId());
+                }
                 Log.i(TAG, "桌面自愈 槽 " + slotNo + ": " + out);
             }, "pip-heal" + i).start();
         }
+    }
+
+    /**
+     * 应用缺席的节流重拉（批次 R）：ensureOnDisplay 只搬不拉，应用在画中画里被
+     * 用户按返回退出（或崩溃）后画布黑到天荒地老。这里补"拉"：
+     * 60s 节流 —— 应用真崩了也别连环 force-stop（m12 重拉风暴的教训反过来用）。
+     * RootOps.ABSENT 只在栈结构解析成功时返回，解析失败绝不会走到这（红线保持）。
+     */
+    public static void relaunchIfAbsent(Context ctx, int which, String pkg, int displayId) {
+        if (pkg == null || pkg.isEmpty() || displayId <= 0 || which < 1 || which > 2) return;
+        long now = SystemClock.elapsedRealtime();
+        if (now - lastRelaunch[which] < RELAUNCH_MIN_INTERVAL_MS) {
+            Log.i(TAG, "槽 " + which + " 应用缺席，重拉节流中");
+            return;
+        }
+        lastRelaunch[which] = now;
+        final Context app = ctx.getApplicationContext();
+        new Thread(() -> {
+            Log.w(TAG, "槽 " + which + " 应用缺席 → 重拉 " + pkg + " -> d" + displayId);
+            RootOps.launchOnDisplay(app, pkg, displayId);
+        }, "pip-relaunch" + which).start();
     }
 }

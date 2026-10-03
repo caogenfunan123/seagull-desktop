@@ -130,6 +130,15 @@
             android:label="@string/mirror_title"
             android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout" />
 
+        <!-- 画中画锚点（批次 R，复刻 CarWithX PipAnchorActivity）：常驻虚拟屏的空 task，
+             重钉落点 + 防空屏回收。excludeFromRecents + 独立 affinity + 透明主题。 -->
+        <activity
+            android:name=".PipAnchorActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity="com.seagull.carlauncher.anchor"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <activity
             android:name=".GardenActivity"
             android:exported="false"

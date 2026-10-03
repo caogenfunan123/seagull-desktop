@@ -651,7 +651,7 @@ public final class PipBoard extends LinearLayout {
         }
     }
 
-    /** 保守自愈：解析不出栈结构就跳过，绝不重拉（m12 教训）。 */
+    /** 保守自愈：解析不出栈结构就跳过，绝不重拉（m12 教训）。应用真缺席（画中画里按了返回）才节流重拉。 */
     private void selfHeal() {
         for (int i = 1; i <= 2; i++) {
             MirrorSlot s = slotOf(i);
@@ -661,6 +661,9 @@ public final class PipBoard extends LinearLayout {
             final int slotNo = i;
             new Thread(() -> {
                 String out = RootOps.ensureOnDisplay(act, pkg, s.displayId());
+                if (out != null && out.startsWith(RootOps.ABSENT)) {
+                    MirrorHost.relaunchIfAbsent(act, slotNo, pkg, s.displayId());
+                }
                 if (out != null && !out.isEmpty()) Log.i(TAG, "自愈 槽 " + slotNo + ": " + out);
             }, "pip-heal" + i).start();
         }
