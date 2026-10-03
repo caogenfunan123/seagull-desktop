@@ -89,7 +89,48 @@ PipAnchorActivity: excludeFromRecents=true, taskAffinity="com.leting.pip.anchor"
 
 ---
 
-## 3. 其它参考
+## 3. SmartDock（axel358/smartdock，Kotlin，GPL-3.0-only）
+
+> 无 root 桌面模式/任务栏 Dock。对双画布主线（VD + su）**无直接可搬代码**，
+> 但验证了几条无 root 路线的真实形态，留档备用。
+> 浅克隆留档：`/tmp/opencode/refs/smartdock`（minSdk 30，DockService.kt 2587 行是核心）。
+
+**架构要点（一手确认，标注 file:line）**
+
+1. **一个 AccessibilityService 身兼三职**（manifest BIND_ACCESSIBILITY_SERVICE）：
+   `TYPE_WINDOWS_CHANGED`（WINDOWS_CHANGE_ADDED/REMOVED）触发刷新运行任务列表
+   （`services/DockService.kt:513`）+ SYSTEM_ALERT_WINDOW 画 Dock + 自定义 toast。
+   任务栈数据本身来自 Shizuku，无障碍只提供"何时刷新"的事件。
+2. **Shizuku 直连 IActivityManager**（`wrappers/ActivityManagerWrapper.kt`）：
+   `ShizukuBinderWrapper(SystemServiceHelper.getSystemService("activity"))`
+   → `IActivityManager.Stub.asInterface` → `getTasks / resizeTask / removeTask`。
+   失败回落框架 `ActivityManager.getRunningTasks`（现代系统只返回自己的 task，形同虚设）。
+3. **moveTaskToFront 是公开 API**（`services/DockService.kt:456`）：
+   框架 `ActivityManager.moveTaskToFront(taskId, 0)` + `REORDER_TASKS` 权限即可切前台，无 root。
+4. **Freeform 启动**（`utils/AppUtils.kt:360`）：
+   `ActivityOptions.makeBasic()` + 反射 `setLaunchWindowingMode(FREEFORM)` +
+   `launchBounds` + `launchDisplayId`。代码里没有任何 `enable_freeform_support`
+   开关写入 —— 默认系统已开 freeform，HyperOS 阉割场景无解。
+5. **窗口吸附 = 纯矩形数学**（`AppUtils.kt:320` makeLaunchBounds）：
+   tiled-left/tiled-bottom 等 mode + dockHeight + statusBarHeight 算 Rect；
+   Dock 避让靠 auto_pin/auto_unpin（全屏应用启动自动收起 Dock，`DockService.kt:486`）。
+6. **第二屏 metrics 的坑他们也没绕过**：`DeviceUtils.kt:233` 自己标了
+   FIXME "This always returns the metrics of the default display"。
+   印证本项目 `dpiFit` 读真实 display metrics 的做法。
+
+**对本项目的判断**
+
+| 候选 | 结论 |
+|---|---|
+| freeform 窗口方案 | 弃。改窗口形态但捕获不了任意应用画面；HyperOS 阉割。与 VD 双画布路线正交 |
+| TYPE_WINDOWS_CHANGED 事件驱动 StackScan 刷新 | **候选优化**。现靠 5s su dumpsys 轮询，事件可降延迟省调用。⚠️ VD 内窗口是否触发该事件需真机验证，成本低值得试 |
+| Shizuku IActivityManager 替代 su | 备用方案记档。用户真机 KernelSU 已有 root，且 Shizuku 要额外装 app + adb 激活，运维更重。未来遇无 root 车机再启用 |
+| moveTaskToFront 公开 API | 备用。relaunchIfAbsent 现走重拉；"task 活着但不在前台"场景可先试 moveTaskToFront 再重拉，边际收益小 |
+| 任务过滤黑名单（systemui/installer/launcher 自身） | 已有同类逻辑，不动 |
+
+---
+
+## 4. 其它参考
 
 | 项目 | 说明 |
 |---|---|
@@ -97,11 +138,12 @@ PipAnchorActivity: excludeFromRecents=true, taskAffinity="com.leting.pip.anchor"
 
 ---
 
-## 4. 本项目与参考仓库的关系
+## 5. 本项目与参考仓库的关系
 
 ```
 carlink-desktop          →   L3 虚拟屏 + root 通道 + 触摸转发（技术来源）
 carplay-reverse-eng      →   PiP 机制与任务栈搬运（理解系统行为）
+smartdock                →   无 root 任务栈路线（Shizuku/无障碍事件）留档，主线不采用
 openlauncher             →   组件系统与设置页组织（思路参考）
 野菜桌面（目标）          →   功能结构与 UI 文案（对齐基准，不含其代码）
 ```
