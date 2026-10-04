@@ -966,6 +966,18 @@ public class SettingsSectionActivity extends BaseActivity {
         }).start();
     }
 
+    /** tag_name 来自 GitHub release，只留版本号字符：挡 "../" 之类写出沙盒的文件名。 */
+    private static String safeVer(String v) {
+        if (v == null) return "update";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < v.length() && sb.length() < 32; i++) {
+            char ch = v.charAt(i);
+            if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+                    || (ch >= '0' && ch <= '9') || ch == '.' || ch == '-' || ch == '_') sb.append(ch);
+        }
+        return sb.length() == 0 ? "update" : sb.toString();
+    }
+
     /** 17.4 自更新：下到 filesDir，用系统安装器装（清单已申请 REQUEST_INSTALL_PACKAGES）。 */
     private void downloadApk(String url, String ver) {
         toast("开始下载 " + ver);
@@ -973,7 +985,11 @@ public class SettingsSectionActivity extends BaseActivity {
             java.io.File out = null;
             String err = "";
             try {
-                out = new java.io.File(getFilesDir(), "seagull-" + ver + ".apk");
+                // 与 res/xml/file_paths.xml 的 "updates" 映射对齐：下载件放
+                // files/updates/ 子目录，别把 files/ 根目录混进暴露面
+                java.io.File dir = new java.io.File(getFilesDir(), "updates");
+                if (!dir.isDirectory()) dir.mkdirs();
+                out = new java.io.File(dir, "seagull-" + safeVer(ver) + ".apk");
                 java.net.HttpURLConnection c =
                         (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
                 try {

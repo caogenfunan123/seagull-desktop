@@ -180,7 +180,10 @@ public final class QuickBar {
     private static void tap(Host host, String key) {
         LauncherModel m = host.model();
         if (key.startsWith("@fn:")) {
-            runFn(host.model().context(), key.substring(4));
+            // 功能按钮分支也要判空：桌面已销毁时 host.model() 是 null，
+            // 旧实现直接 .context() 拿上下文弹 toast，NPE（批次 T 复盘坐实）
+            if (m == null) return;
+            runFn(m.context(), key.substring(4));
             return;
         }
         if (m != null) {

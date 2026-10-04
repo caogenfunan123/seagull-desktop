@@ -410,23 +410,44 @@ public final class LauncherModel {
         return i < 0 ? pkg : pkg.substring(i + 1);
     }
 
+    /**
+     * 图标缓存：getApplicationIcon 每调一次都是一趟 Binder + 位图解码，
+     * 桌面重画 / 长按拖动 / 组件条刷新全靠它，没缓存时反复吃。
+     * 命中时从 ConstantState 取独立副本：共享底层位图（无解码），
+     * 各 View 的 bounds 互不干扰（桌面 56dp 与 Dock 44dp 同屏时会打架）。
+     */
+    private static final android.util.LruCache<String, android.graphics.drawable.Drawable> ICONS =
+            new android.util.LruCache<>(96);
+
     public Drawable icon(App a) {
         if (a == null) return null;
+        android.graphics.drawable.Drawable d = ICONS.get(a.pkg);
+        if (d != null) {
+            android.graphics.drawable.Drawable.ConstantState cs = d.getConstantState();
+            return cs != null ? cs.newDrawable(ctx.getResources()) : d;
+        }
         try {
-            return ctx.getPackageManager().getApplicationIcon(a.pkg);
+            d = ctx.getPackageManager().getApplicationIcon(a.pkg);
         } catch (Throwable t) {
             return null;
         }
+        if (d != null) ICONS.put(a.pkg, d);
+        return d;
     }
 
-    /** 启动应用。asNewTask=true 时另开任务栈。 */
+    /**
+     * 启动应用。asNewTask 参数保留给调用方，但 NEW_TASK 恒加：ctx 构造时已
+     * app 化（见构造），applicationContext 出发不带 NEW_TASK 时
+     * startActivity 必抛 AndroidRuntimeException 且被下面的 catch 吞掉，
+     * 桌面图标 / Dock / 文件夹点一下静默无响应（批次 T 复盘坐实）。
+     */
     public void launch(App a, boolean asNewTask) {
         if (a == null) return;
         try {
             Intent i = new Intent(Intent.ACTION_MAIN);
             i.addCategory(Intent.CATEGORY_LAUNCHER);
             i.setComponent(new ComponentName(a.pkg, a.cls));
-            if (asNewTask) i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             i.addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
             ctx.startActivity(i);
         } catch (Throwable t) {
@@ -448,11 +469,13 @@ public final class LauncherModel {
             for (String k : pinned) if (!out.contains(k)) out.add(k);
             return out;
         }
-        Set<String> covered = new HashSet<>();
+        // 按文件夹「身份」去重（Folder 未覆写 equals，Set 语义即同一实例）：
+        // 旧实现按 f.name 去重，两个同名文件夹只有一个能在桌面占位
+        Set<Folder> covered = new java.util.LinkedHashSet<>();
         for (App a : allApps) {
             Folder f = folderOf(a.key());
             if (f != null) {
-                if (covered.add(f.name)) out.add(a.key());
+                if (covered.add(f)) out.add(a.key());
             } else if (!out.contains(a.key())) {
                 out.add(a.key());
             }
@@ -647,11 +670,18 @@ public final class LauncherModel {
 
     /* ==================== 组件条 ==================== */
 
-    /** 组件条槽位：0=时钟 1=日期 2=电量 3=内存 4=天气，越界的直接丢。 */
-    public void toggleWidget(int id) {
-        if (id < 0 || id > 4) return;
-        if (widgets.contains(id)) widgets.remove(id);
-        else if (widgets.size() < WIDGET_MAX) widgets.add(id);
+    /**
+     * 组件条槽位：0=时钟 1=日期 2=电量 3=内存 4=天气 5=歌词 6=快捷栏。
+     * 5/6 在 DesktopView.makeWidget 里有渲染器（歌词窗格 / QuickBar 展开），
+     * 入口却卡在旧实现的 id>4 硬编码上，菜单里点了没反应 = 死按钮（批次 T 坐实）。
+     * @return false = 越界 id，或已满 WIDGET_MAX 格放不下
+     */
+    public boolean toggleWidget(int id) {
+        if (id < 0 || id > 6) return false;
+        if (widgets.contains(id)) { widgets.remove(id); return true; }
+        if (widgets.size() >= WIDGET_MAX) return false;
+        widgets.add(id);
+        return true;
     }
 
     public boolean hasWidget(int id) { return widgets.contains(id); }
@@ -924,7 +954,9 @@ public final class LauncherModel {
             /* 系统 */
             o.put("autoHome", autoHome);
 
-            sp().edit().putString(K_LAYOUT, o.toString()).commit();
+            // apply 异步落盘：配置保存全在主线程（图标拖动、开关切换都在 UI 上），
+            // commit() 会同步 fsync，大存档时主线程能卡到几十毫秒（批次 T 坐实）
+            sp().edit().putString(K_LAYOUT, o.toString()).apply();
         } catch (Throwable t) {
             Log.w(TAG, "保存布局失败", t);
         }
@@ -943,11 +975,11 @@ public final class LauncherModel {
             readInto(o.optJSONArray("dock"), dock);
             JSONArray ws = o.optJSONArray("widgets");
             // optInt 对缺省项/非数字项返回 0：脏存档里一个 null 就会把时钟
-            // 悄悄塞回组件条。范围钳制之外只收 0~4
+            // 悄悄塞回组件条。范围钳制之外只收 0~6（与 toggleWidget 对齐）
             if (ws != null) {
                 for (int i = 0; i < ws.length(); i++) {
                     int id = ws.optInt(i, -1);
-                    if (id >= 0 && id <= 4 && !widgets.contains(id)) widgets.add(id);
+                    if (id >= 0 && id <= 6 && !widgets.contains(id)) widgets.add(id);
                 }
             }
             JSONArray fs = o.optJSONArray("folders");
@@ -1185,6 +1217,7 @@ public final class LauncherModel {
     }
 
     public boolean importScheme(String json) {
+        String prev = sp().getString(K_LAYOUT, null);
         try {
             new JSONObject(json);   // 校验
             sp().edit().putString(K_LAYOUT, json).commit();
@@ -1192,6 +1225,14 @@ public final class LauncherModel {
             load();
             return true;
         } catch (Throwable t) {
+            // 旧实现先写后读：语法对、语义错的存档会把 load 搞抛异常，
+            // 方法返回 false，但存档已经被污染，重启后停在 defaults，
+            // 用户以为「导入失败」，配置其实已经丢了。
+            if (prev != null) {
+                sp().edit().putString(K_LAYOUT, prev).commit();
+                reset();
+                load();
+            }
             return false;
         }
     }
@@ -1215,24 +1256,98 @@ public final class LauncherModel {
         load();
     }
 
-    /** 标量配置回默认值（defaults() 只管列表类那一组，这里管剩下的）。 */
+    /**
+     * 标量配置回默认值（defaults() 只管列表类那一组，这里管剩下的）。
+     * 必须覆盖全部标量字段：旧实现只重置 16 个，Dock/菜园/小白点/野菜岛/
+     * 天气/歌词/窗口/触摸/快捷按钮全留在用户调校值上，「恢复出厂」名不副实
+     * （用户实测过：重置后字号还是 130%）。
+     */
     private void resetScalars() {
-        fontScale = 100;
         showLabels = true;
         widgetStripAlpha = 100;
         layoutPreset = 0;
         customLayoutName = "";
+        fontScale = 100;
+        /* Dock */
+        dockPos = DockPos.BOTTOM;
+        dockCount = 5;
+        dockWidth = 76;
+        dockGap = 8;
+        dockIconSize = 44;
+        dockAlpha = 100;
+        dockAutoHide = false;
+        dockFixed = false;
+        dockShowClock = true;
+        quickBtn1 = "";
+        quickBtn2 = "";
+        /* 菜园 */
+        gardenEnabled = true;
+        gardenDim = 60;
+        gardenStyle = GardenStyle.CENTER_CLOCK;
+        /* 小白点 */
+        ballEnabled = false;
+        ballX = 40;
+        ballY = -1;
+        ballSize = 48;
+        ballAlpha = 90;
+        /* 外观 */
+        themeId = "leaf_shadow";
+        customAccent = "";
+        dayNight = DayNight.DARK;
+        wallDay = "";
+        wallNight = "";
+        wallDim = 0;
+        /* 屏幕 */
+        marginH = 12;
+        marginV = 8;
+        gap = 6;
+        portMarginH = 12;
+        portMarginV = 8;
+        portGap = 6;
+        orientation = Orientation.LANDSCAPE;
+        pipWeightA = 1;
+        pipWeightB = 1;
+        keepScreenOn = false;
+        hideSystemBars = false;
+        topInfoBar = true;
+        autoNetworkTime = true;
+        /* 野菜岛 */
+        islandEnabled = false;
+        islandOffsetY = 0;
+        islandWidth = 320;
+        islandLyric = false;
+        /* 天气 */
+        citySource = CitySource.MANUAL;
+        weatherCity = "";
+        weatherUpdatedAt = 0L;
+        weatherAuto = true;
+        weatherSummary = "";
+        weatherForecast = "";
+        weatherError = "";
+        weatherLat = 0;
+        weatherLon = 0;
+        /* 歌词 */
+        lyricSource = LyricSource.PLAYER;
         lyricLines = 0;
+        lyricSize = 100;
         lyricOffsetMs = 0;
         lyricStatusBar = false;
         lyricNotification = false;
-        lyricHidden.clear();
-        weatherAuto = true;
-        weatherCity = "";
-        weatherUpdatedAt = 0L;
-        themeId = "leaf_shadow";
-        dayNight = DayNight.DARK;
-        pipWeightA = 1;
-        pipWeightB = 1;
+        lyricBluetooth = true;
+        mediaCardLines = 3;
+        /* 窗口 */
+        perf = Perf.MID;
+        compatMode = false;
+        bgKeep = 1;
+        winDefaultScale = 100;
+        winLockMap = true;
+        releaseOnLock = false;
+        pauseOnScreenOff = false;
+        /* 触摸 */
+        touchThreshold = 10;
+        longPressMs = 500;
+        useAccessibility = true;
+        useRootInput = true;
+        touchFollow = true;
     }
 }

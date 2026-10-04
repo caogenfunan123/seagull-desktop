@@ -6,5 +6,7 @@
   安装 intent 必须走 content:// + FileProvider。
 -->
 <paths>
-    <files-path name="updates" path="." />
+    <!-- 只暴露 updates 子目录。旧 path="." 把整个 files/ 都圈进映射，
+         而 files/ 下还有歌词缓存、配置导出、壁纸库等私货（批次 T 收紧） -->
+    <files-path name="updates" path="updates" />
 </paths>

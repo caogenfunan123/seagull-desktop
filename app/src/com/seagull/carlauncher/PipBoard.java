@@ -159,6 +159,13 @@ public final class PipBoard extends LinearLayout {
         ui.postDelayed(this::selfHeal, 600);
     }
 
+    /**
+     * 宿主重建 UI（换肤 / 换壁纸等）时调：只摘待跑的 redeploy/selfHeal 回调。
+     * Surface 不在这里处理——SurfaceView 随旧树 detach 时 surfaceDestroyed
+     * 会自然走到 slot.detachSurface（见建卡处的 Callback）。
+     */
+    public void cancelPending() { ui.removeCallbacksAndMessages(null); }
+
     /** 退出只断 Surface —— 屏与应用留给 MirrorHost 常驻；没有活跃屏才收 token。 */
     public void onDestroy() {
         // postDelayed(redeployIfPossible/selfHeal) 必须摘：300ms 内 finish 时它们

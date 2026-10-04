@@ -71,6 +71,8 @@ public final class Lyrics {
     private static final List<String[]> CANDS = new ArrayList<>();   // 酷狗候选 {id, accesskey}
     private static int ver = 0;
     private static String lastPosted = "";
+    /** 播放中每隔这么多跳用控制器快照重新对一次时（墙钟累加会漂移） */
+    private static int anchorTick = 0;
 
     private Lyrics() {}
 
@@ -186,10 +188,20 @@ public final class Lyrics {
             play = ps != null && ps.getState() == PlaybackState.STATE_PLAYING;
             playing = play;
             if (play) {
-                // getPosition() 是快照，不会自己走，所以自己按墙钟累加
+                // getPosition() 是快照，不会自己走，所以自己按墙钟累加；
+                // 但 postDelayed 的真实间隔与墙钟有误差，长播会漂移出秒级。
+                // 每 15 秒（15 跳）用控制器快照重新锚一次，drift 收敛回百毫秒内。
                 pos += Math.max(0, now - lastTick);
-            } else if (ps != null) {
-                pos = Math.max(0, ps.getPosition());
+                if (++anchorTick >= 15 && ps != null && ps.getLastPositionUpdateTime() > 0) {
+                    pos = Math.max(0, ps.getPosition()
+                            + (now - ps.getLastPositionUpdateTime()));
+                    anchorTick = 0;
+                }
+            } else {
+                anchorTick = 0;
+                if (ps != null) {
+                    pos = Math.max(0, ps.getPosition());
+                }
             }
         }
         lastTick = now;
@@ -468,7 +480,11 @@ public final class Lyrics {
             ByteArrayOutputStream bo = new ByteArrayOutputStream();
             byte[] buf = new byte[4096];
             int n;
-            while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
+            while ((n = in.read(buf)) > 0) {
+                bo.write(buf, 0, n);
+                // 回包封顶 1MB：歌词接口异常/被劫持时不会把内存吃爆
+                if (bo.size() > 1024 * 1024) throw new IllegalStateException("回包过大");
+            }
             String s = bo.toString("UTF-8");
             if (code >= 400) throw new IllegalStateException("HTTP " + code);
             return s;

@@ -107,6 +107,9 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
             lastSkin = sig;
             Skin.apply(model);
             model.loadApps();
+            // 旧 pip 的待跑 redeploy/selfHeal 摘掉：setContentView 会造新的
+            // PipBoard，旧的没人 onDestroy，回调会对已废弃的树自愈（批次 T 坐实）
+            if (pip != null) pip.cancelPending();
             setContentView(buildUi());
             buildTopBar();
             buildBottomBar();

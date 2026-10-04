@@ -17,8 +17,10 @@ public class BootReceiver extends BroadcastReceiver {
             pull(ctx);
             return;
         }
-        boolean auto = ctx.getSharedPreferences(HomeActivity.PREFS, Context.MODE_PRIVATE)
-                .getBoolean("autoHome", true);
+        // autoHome 存在布局存档的 JSON 里（LauncherModel.save 的 K_LAYOUT），
+        // 旧实现读顶层 SP 的 "autoHome" 键——模型从不写这个键，
+        // 「开机回桌面」开关永远是默认 true（批次 T 复盘坐实）
+        boolean auto = new LauncherModel(ctx, false).autoHome;
         if (auto) pull(ctx);
     }
 

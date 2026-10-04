@@ -16,6 +16,23 @@ public final class SysOps {
 
     private SysOps() {}
 
+    /* ---------------- 参数校验（su -c 拼接防注入，批次 T 复盘坐实） ---------------- */
+
+    /** 包名：至少两段，只含 [A-Za-z0-9_]。 */
+    private static boolean safePkg(String p) {
+        return p != null && p.matches("[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+");
+    }
+
+    /** 路径：只含文件名字符；禁空格/;/&/|/$ 与 ..（防写出沙盒）。 */
+    private static boolean safePath(String p) {
+        return p != null && p.matches("[a-zA-Z0-9_./+-]+") && !p.contains("..");
+    }
+
+    /** 权限名：android.permission.XXX / pkg.perm.PERM 形态。 */
+    private static boolean safePerm(String p) {
+        return p != null && p.matches("[a-zA-Z][a-zA-Z0-9_.]*");
+    }
+
     public static final class R {
         public final boolean ok;
         public final String out;
@@ -102,10 +119,12 @@ public final class SysOps {
     /* ---------------- 进程 / 任务 ---------------- */
 
     public static R killBackground(String pkg) {
+        if (!safePkg(pkg)) return new R(false, "包名不合法");
         return run("am force-stop " + pkg);
     }
 
     public static R clearCache(String pkg) {
+        if (!safePkg(pkg)) return new R(false, "包名不合法");
         return run("pm clear " + pkg);
     }
 
@@ -113,6 +132,7 @@ public final class SysOps {
 
     /** 静默安装（自身更新）。uid=1000 时才是真静默，否则系统会要求确认。 */
     public static R installApk(String path) {
+        if (!safePath(path)) return new R(false, "路径不合法");
         R r = run("pm install -r -t " + path);
         if (!r.ok) r = run("pm install -r -t " + path);   // 部分 ROM 首次返回 session 提示
         return r;
@@ -120,10 +140,12 @@ public final class SysOps {
 
     /** 运行时权限直接授予（省掉用户点授权框）。 */
     public static R grant(String pkg, String perm) {
+        if (!safePkg(pkg) || !safePerm(perm)) return new R(false, "参数不合法");
         return run("pm grant " + pkg + " " + perm);
     }
 
     public static R forceStop(String pkg) {
+        if (!safePkg(pkg)) return new R(false, "包名不合法");
         return run("am force-stop " + pkg);
     }
 

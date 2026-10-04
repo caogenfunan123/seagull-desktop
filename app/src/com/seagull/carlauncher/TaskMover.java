@@ -38,13 +38,16 @@ public final class TaskMover {
     /** 某块屏上最靠前的 taskId。找不到返回 -1。 */
     public static int frontTask(Context c, int displayId) {
         if (!Caps.hasRoot()) return -1;
-        String out = Caps.exec("dumpsys activity activities | grep -B2 -A12 'displayId=" + displayId + "'");
+        // [^0-9] 边界必须有：否则 displayId=1 会命中 displayId=10/11/…
+        // 的行，收回/拉回搬错屏上的任务（批次 T 复盘坐实）
+        String out = Caps.exec("dumpsys activity activities | grep -B2 -A12 'displayId="
+                + displayId + "[^0-9]'");
         if (out == null) return -1;
         // 真实 dump 的任务行是 `Task{a1b2 #42 ...}`（Task{#N} 形式）；
         // taskId=42 形式也认（老 am stack list 口径）。只认前者会永远找不到任务。
         Matcher m = Pattern.compile("Task\\{[0-9a-fA-F]+ #(\\d+)").matcher(out);
         if (m.find()) return Integer.parseInt(m.group(1));
-        Matcher m2 = Pattern.compile("taskId=(\\d+)").matcher(out);
+        Matcher m2 = Pattern.compile("\\btaskId=(\\d+)").matcher(out);
         return m2.find() ? Integer.parseInt(m2.group(1)) : -1;
     }
 

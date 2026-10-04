@@ -54,9 +54,14 @@ public class LayoutModeActivity extends BaseActivity {
         col.addView(head);
 
         col.addView(section("桌面布局（点击切换，立即生效）"));
+
         listCol = new LinearLayout(this);
         listCol.setOrientation(LinearLayout.VERTICAL);
         col.addView(listCol);
+        // 行必须在这里随 build 填：旧实现只在 rebuildRows 里填，且填完旧
+        // listCol 后又 setContentView(build()) 换一棵全新的空树——
+        // 「桌面布局」列表进页面永远是空的（批次 T 复盘坐实）。
+        fillModeRows();
 
         col.addView(section("组件条（点一下开/关）"));
         for (int i = 0; i < DesktopView.WIDGET_NAMES.length; i++) col.addView(widgetRow(i));
@@ -100,12 +105,18 @@ public class LayoutModeActivity extends BaseActivity {
 
     private View wrap(ScrollView sv, LinearLayout col) { sv.addView(col); return sv; }
 
-    private void rebuildRows() {
+    private void fillModeRows() {
+        if (listCol == null) return;
         listCol.removeAllViews();
         for (LauncherModel.Mode m : LauncherModel.Mode.values()) {
             listCol.addView(modeRow(m));
         }
-        // 重建"显示名称"与组件行状态
+    }
+
+    private void rebuildRows() {
+        // 整树重建即可（build() 内已 fillModeRows）：
+        // 旧实现先往旧 listCol 填行、再 setContentView(build()) 造一棵新树，
+        // 刚填的行随旧树一起被丢弃，界面永远看不到布局列表
         setContentView(build());
     }
 

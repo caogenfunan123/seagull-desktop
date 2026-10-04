@@ -81,9 +81,14 @@ public final class RootMain {
                 // 只放行 shell / system / root。否则等于给任意 app 开了一个
                 // 能拉起虚拟屏、转发触摸的特权通道。
                 int uid = peerUid(c);
+                // 白名单：root / system / 本应用自身 uid。SHELL_UID(2000) 已撤：
+                // adb shell 连抽象 socket 就能指挥守护进程（拉起虚拟屏、转发
+                // 触摸），KernelSU 的同意框就白给了。旧白名单还不含本家
+                // uid(10xxx)：普通安装下 launcher 自己的连接全被拒，PRIV_*
+                // 全程静默降级成 shell 慢通道（批次 T 复盘坐实）。
                 if (uid != android.os.Process.ROOT_UID
                         && uid != android.os.Process.SYSTEM_UID
-                        && uid != android.os.Process.SHELL_UID) {
+                        && uid != selfUid()) {
                     Log.w(TAG, "拒绝非特权 peer uid=" + uid);
                     try { c.close(); } catch (Throwable ignore) {}
                     continue;
@@ -112,6 +117,46 @@ public final class RootMain {
             Log.w(TAG, "peerUid 失败: " + t);
             return -1;
         }
+    }
+
+    private static volatile int sSelfUid = -1;
+
+    /**
+     * 本应用自己的 uid。守护进程由本应用派 su 拉起，服务对象就是它：
+     * 普通安装 = 10xxx，装进 /system/priv-app = 1000，两条路都要放行。
+     * 取法两条：反射 Process.getUidForName（@hide，root 下可用），
+     * 失败回落 dumpsys package 的 userId=/appId= 行。
+     */
+    private static int selfUid() {
+        if (sSelfUid > 0) return sSelfUid;
+        try {
+            java.lang.reflect.Method m = android.os.Process.class
+                    .getMethod("getUidForName", String.class);
+            Object v = m.invoke(null, "com.seagull.carlauncher");
+            if (v instanceof Integer) sSelfUid = (Integer) v;
+        } catch (Throwable t) {
+            Log.w(TAG, "selfUid 反射失败，回落 dumpsys: " + t);
+        }
+        if (sSelfUid > 0) return sSelfUid;
+        try {
+            java.lang.Process p = Runtime.getRuntime().exec(
+                    new String[]{"dumpsys", "package", "com.seagull.carlauncher"});
+            java.io.BufferedReader r = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(p.getInputStream()));
+            String line;
+            while ((line = r.readLine()) != null) {
+                int i = line.indexOf("userId=");
+                if (i < 0) i = line.indexOf("appId=");
+                if (i < 0) continue;
+                int j = line.indexOf('=', i) + 1, k = j;
+                while (k < line.length() && Character.isDigit(line.charAt(k))) k++;
+                if (k > j) { sSelfUid = Integer.parseInt(line.substring(j, k)); break; }
+            }
+            r.close();
+        } catch (Throwable t) {
+            Log.w(TAG, "selfUid dumpsys 也失败: " + t);
+        }
+        return sSelfUid;
     }
 
     /* ---------------- 客户端会话 ---------------- */

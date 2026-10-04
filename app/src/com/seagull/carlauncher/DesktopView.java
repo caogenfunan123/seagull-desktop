@@ -76,13 +76,29 @@ public class DesktopView extends FrameLayout {
         hiPaint.setStrokeWidth(dp(2));
         hiPaint.setColor(0xFF8CC26A);
         build();
-        // 歌词一秒一跳，组件条里的歌词格跟着换；桌面别的一秒重画一次太浪费
-        Lyrics.addSink(new Lyrics.Sink() {
-            @Override public void onLyric(String[] w, String t, String a) {
-                LauncherModel m = model();
-                if (m != null && m.hasWidget(5)) renderWidgets(m);
-            }
-        });
+    }
+
+    /**
+     * 歌词 sink：单实例 + attach/detach 配套。旧实现在构造里匿名注册，
+     * 换肤 / 重建时旧 DesktopView 连同 sink 被 Lyrics 永久持有，
+     * 每次重建泄漏一整棵旧视图树（批次 T 复盘坐实，对比 HomeActivity
+     * islandSink 的 removeSink/addSink 纪律）。
+     */
+    private final Lyrics.Sink lyricSink = new Lyrics.Sink() {
+        @Override public void onLyric(String[] w, String t, String a) {
+            LauncherModel m = model();
+            if (m != null && m.hasWidget(5)) renderWidgets(m);
+        }
+    };
+
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        Lyrics.addSink(lyricSink);
+    }
+
+    @Override protected void onDetachedFromWindow() {
+        Lyrics.removeSink(lyricSink);
+        super.onDetachedFromWindow();
     }
 
     private int dp(float v) {
@@ -356,7 +372,11 @@ public class DesktopView extends FrameLayout {
                 .setItems(opts, (d, which) -> {
                     LauncherModel mm = model();
                     if (mm == null) return;
-                    mm.toggleWidget(ids.get(which));
+                    // false = 已满 WIDGET_MAX 格：旧实现静默丢弃，用户以为点了没反应
+                    if (!mm.toggleWidget(ids.get(which))) {
+                        host.onToast("组件都放满了（最多 " + LauncherModel.WIDGET_MAX + " 个）");
+                        return;
+                    }
                     refresh();
                 })
                 .setNegativeButton("取消", null)
