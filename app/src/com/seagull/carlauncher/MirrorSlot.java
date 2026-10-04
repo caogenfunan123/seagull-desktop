@@ -226,7 +226,6 @@ public final class MirrorSlot implements CanvasSource {
         // 重钉有稳定落点、系统不当空屏清理。失败不阻断部署（目标应用照常起）。
         try { RootOps.launchAnchor(ctx, displayId); }
         catch (Throwable t) { Log.w(TAG, "[" + name + "] 锚点启动失败（不阻断）: " + t); }
-        register(displayId);
 
         boolean ok = RootOps.launchOnDisplay(ctx, pkg, displayId);
         if (!ok) { lastError = "am start --display " + displayId + " 失败"; teardownVd(); return false; }

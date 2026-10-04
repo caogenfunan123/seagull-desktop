@@ -28,6 +28,8 @@ public final class MirrorHost {
     private static final Map<String, MirrorSlot> SLOTS = new HashMap<>();
     private static long lastHeal;
     private static final long RELAUNCH_MIN_INTERVAL_MS = 60_000;
+    /** 桌面自愈与画布自愈两条线程都会写：加锁，long 撕裂 + 重复重拉一起防。 */
+    private static final Object RELAUNCH_LOCK = new Object();
     private static final long[] lastRelaunch = new long[3];
 
     private MirrorHost() {}
@@ -117,11 +119,13 @@ public final class MirrorHost {
     public static void relaunchIfAbsent(Context ctx, int which, String pkg, int displayId) {
         if (pkg == null || pkg.isEmpty() || displayId <= 0 || which < 1 || which > 2) return;
         long now = SystemClock.elapsedRealtime();
-        if (now - lastRelaunch[which] < RELAUNCH_MIN_INTERVAL_MS) {
-            Log.i(TAG, "槽 " + which + " 应用缺席，重拉节流中");
-            return;
+        synchronized (RELAUNCH_LOCK) {
+            if (now - lastRelaunch[which] < RELAUNCH_MIN_INTERVAL_MS) {
+                Log.i(TAG, "槽 " + which + " 应用缺席，重拉节流中");
+                return;
+            }
+            lastRelaunch[which] = now;
         }
-        lastRelaunch[which] = now;
         final Context app = ctx.getApplicationContext();
         new Thread(() -> {
             Log.w(TAG, "槽 " + which + " 应用缺席 → 重拉 " + pkg + " -> d" + displayId);

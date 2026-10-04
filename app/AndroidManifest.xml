@@ -131,11 +131,14 @@
             android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize|screenLayout" />
 
         <!-- 画中画锚点（批次 R，复刻 CarWithX PipAnchorActivity）：常驻虚拟屏的空 task，
-             重钉落点 + 防空屏回收。excludeFromRecents + 独立 affinity + 透明主题。 -->
+             重钉落点 + 防空屏回收。excludeFromRecents + 独立 affinity + 透明主题。
+             singleTask（批次 S）：NEW_TASK 复用锚点 task 时只保留一个实例 ——
+             standard 模式下每次部署都会往锚点 task 里叠一个透明实例，永不 finish。 -->
         <activity
             android:name=".PipAnchorActivity"
             android:excludeFromRecents="true"
             android:exported="false"
+            android:launchMode="singleTask"
             android:taskAffinity="com.seagull.carlauncher.anchor"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 

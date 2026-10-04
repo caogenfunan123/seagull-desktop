@@ -197,7 +197,7 @@ public final class PrivClient {
     public static synchronized boolean motion(int displayId, int action,
                                               long downTime, long eventTime,
                                               float[] xs, float[] ys, int count) {
-        if (!ensure()) return false;
+        if (!ensureForTouch()) return false;
         PrivCodec.Response r = roundTrip(PrivCodec.encodeMotionRequest(
                 nextSeq(), displayId, action, downTime, eventTime, xs, ys, count));
         return r != null && r.ok;
@@ -225,6 +225,21 @@ public final class PrivClient {
     /* ---------------- 收发 ---------------- */
 
     private static long nextSeq() { return ++seq; }
+
+    /**
+     * motion（触摸手势链）专用：手势事件从主线程 OnTouchListener 直达这里。
+     * ensure() 失败时会在调用线程上 sleep 500ms×N + fork su（最多 ~3.5s）——
+     * 守护进程掉线后的第一次触摸在主线程跑这条链就是 ANR（输入超时 5s）。
+     * 主线程只接受"已连接"状态：掉线立即返回 false，TouchForward 本手势
+     * 余下事件退回命令通道（跑在 seagull-touch 线程）。launch/move 等只在
+     * 后台线程走，仍用完整 ensure()。
+     */
+    private static boolean ensureForTouch() {
+        if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) {
+            return available();
+        }
+        return ensure();
+    }
 
     /** 一次请求-应答。任何 IO 异常都意味着连接已死：关掉，让上层走兜底。 */
     private static PrivCodec.Response roundTrip(String req) {

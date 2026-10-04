@@ -12,6 +12,54 @@
 
 ---
 
+## 批次 S — 全库复盘：复读画中画链路（~2700 行）+ 全库高危模式扫描，修 4 处确凿问题
+
+**目标**：用户要求复盘全部代码找必修问题。精读批次 R 触碰过的完整链路
+（MirrorSlot / RootOps / MirrorHost / PipBoard / StackScan / TrustedFlags /
+PipAnchorActivity / Caps / TouchForward / PrivClient），HomeActivity 接线抽查，
+其余 50+ 文件按模式扫描（静态 Activity 泄漏 / 主线程 sleep / API 门控 / 资源释放）。
+
+**修掉的确凿问题**
+
+1. **锚点在 API 29 上秒崩（P1）**：`PipAnchorActivity.onCreate` 直接调
+   `Activity.getDisplay()`——该 API 是 API 30+，minSdk 29。29 的设备上
+   NoSuchMethodError → 锚点起不来 → VD 上没有常驻 task → 空屏被系统清理，
+   批次 R 的锚点机制整体失效。→ `SDK_INT >= 30` 门控（调用点必须门控，
+   光判空救不了 NoSuchMethodError）。
+2. **锚点实例无限叠加（P1）**：manifest 里锚点是 standard launchMode，
+   `launchAnchor` 只带 NEW_TASK——同 affinity 会路由进既有锚点 task 并
+   【新增一个透明实例】，永不 finish。每次部署（换应用/换尺寸重建）叠一个。
+   → manifest 加 `launchMode="singleTask"`：复用 task 且单实例，真幂等。
+3. **守护进程掉线后首触 ANR（P1）**：触摸手势链 feed → replay →
+   `PrivClient.motion` → `ensure()` 在【主线程】跑；ensure 失败时
+   waitConnect sleep 500ms×N + fork su，最多 ~3.5s（ANR 阈值 5s）。
+   → 新增 `ensureForTouch()`：主线程只接受"已连接"（available 快查），
+   掉线立即 false → TouchForward 本手势余下事件退回命令通道
+   （跑在 seagull-touch 线程）；launch/move 仍走完整 ensure（调用方全在后台线程）。
+4. **重拉节流竞态（P2）**：`MirrorHost.lastRelaunch` 是跨线程读写的
+   long[]（桌面自愈线程 + 画布自愈线程都写），无同步 → long 撕裂 +
+   双重重拉。→ `RELAUNCH_LOCK` 包住判定+写入。
+
+**顺手清理**：`MirrorSlot.deploy` 里 `register(displayId)` 调了两次（223/229 行）。
+
+**复核过没问题的**（免得下次重查）：`Caps.exec` 超时路径有 destroyForcibly
+兜底、读线程随进程回收；`StackScan` 批次 P 的包名边界修复在位且
+StackListCheck 30 项覆盖；`TouchForward` 手势解释/降级链完整；`PrivClient`
+所有公开操作在类锁内、roundTrip 失败即关连接；`PipBoard` 单焦点/armed/CANCEL
+链路、同槽部署串行锁、onDestroy 摘回调；全库无静态 Activity/Context 泄漏、
+无主线程 sleep（除 PrivClient 本批修的）、su 通道超时全覆盖。
+
+**遗留（记 TODO，等真机证据再动）**：①私有屏弹回检测——singleTask 目标
+（网易云）若被系统从 flags=0 私有屏弹回主屏，ensureOnDisplay 搬回会 3s 一次
+循环（move 不重拉，负载可控但治标）；连续 N 次弹回应升级 TRUSTED 重建，
+先记 P2-13。②Android 14 录屏授权 token 单次有效：两份投影会话在 API 34 上
+第二次 getMediaProjection 必失败（现有 catch + 共用降级 + 日志在位），
+根治要改两次授权申请，记 P2-14。
+
+**验证**：typecheck OK；自检 6 套全过（30/54/14/15/10/PrivCodec）。
+
+
+
 ## 批次 R — 实验台回灌：CarWithX 建屏三铁律移植 + 锚点 + 缺席重拉
 
 **目标**：把 `seagull-pip-lab`（复刻 CarWithX）在真机验证过的路子回灌主项目，修三个症状：

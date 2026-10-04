@@ -23,8 +23,15 @@ public class PipAnchorActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        Log.i(TAG, "锚点就位 task=" + getTaskId() + " displayId="
-                + (getDisplay() != null ? getDisplay().getDisplayId() : -1));
+        // Activity.getDisplay() 是 API 30+（minSdk 29）：29 上直接调用 = NoSuchMethodError
+        // 锚点秒崩 → VD 上没有常驻 task → 空屏被系统清理，整套锚点机制失效。
+        int d;
+        if (android.os.Build.VERSION.SDK_INT >= 30 && getDisplay() != null) {
+            d = getDisplay().getDisplayId();
+        } else {
+            d = -1;
+        }
+        Log.i(TAG, "锚点就位 task=" + getTaskId() + " displayId=" + d);
     }
 
     @Override
