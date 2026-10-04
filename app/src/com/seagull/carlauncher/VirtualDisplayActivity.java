@@ -80,7 +80,7 @@ public class VirtualDisplayActivity extends BaseActivity {
         state.setTextColor(Skin.c(R.color.leaf));
         state.setTextSize(12);
         state.setTypeface(Typeface.MONOSPACE);
-        state.setBackgroundColor(Skin.c(R.color.panel));
+        state.setBackground(Skin.round(Skin.c(R.color.panel), 12f));
         state.setPadding(dp(12), dp(10), dp(12), dp(10));
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
         sp.topMargin = dp(12);
@@ -192,7 +192,7 @@ public class VirtualDisplayActivity extends BaseActivity {
         tv.setTextSize(13);
         tv.setGravity(Gravity.CENTER_VERTICAL);
         tv.setPadding(dp(14), dp(12), dp(14), dp(12));
-        tv.setBackgroundColor(Skin.c(R.color.card));
+        tv.setBackground(Skin.round(Skin.c(R.color.card), 12f));
         tv.setOnClickListener(v -> new Thread(r).start());
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
         p.topMargin = dp(8);

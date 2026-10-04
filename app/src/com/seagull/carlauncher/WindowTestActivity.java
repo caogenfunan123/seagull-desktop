@@ -70,7 +70,7 @@ public class WindowTestActivity extends BaseActivity {
         report.setTextColor(Skin.c(R.color.text));
         report.setTextSize(13);
         report.setTypeface(android.graphics.Typeface.MONOSPACE);
-        report.setBackgroundColor(Skin.c(R.color.panel));
+        report.setBackground(Skin.round(Skin.c(R.color.panel), 12f));
         report.setPadding(dp(14), dp(12), dp(14), dp(12));
         col.addView(report);
 
@@ -131,7 +131,7 @@ public class WindowTestActivity extends BaseActivity {
         tv.setTextSize(14);
         tv.setGravity(Gravity.CENTER_VERTICAL);
         tv.setPadding(dp(14), dp(14), dp(14), dp(14));
-        tv.setBackgroundColor(Skin.c(R.color.card));
+        tv.setBackground(Skin.round(Skin.c(R.color.card), 12f));
         tv.setOnClickListener(l);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
         p.topMargin = dp(10);

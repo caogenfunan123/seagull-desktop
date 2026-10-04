@@ -80,7 +80,7 @@ public class AppListActivity extends BaseActivity {
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setPadding(dp(12), dp(10), dp(12), dp(10));
-            row.setBackgroundColor(Skin.c(R.color.card));
+            row.setBackground(Skin.round(Skin.c(R.color.card), 12f));
 
             ImageView iv = new ImageView(this);
             iv.setImageDrawable(e.icon);
@@ -97,7 +97,7 @@ public class AppListActivity extends BaseActivity {
             TextView pkg = new TextView(this);
             pkg.setText(e.pkg);
             pkg.setTextColor(Skin.c(R.color.text_dim));
-            pkg.setTextSize(10);
+            pkg.setTextSize(12);
             row.addView(pkg);
 
             LinearLayout.LayoutParams wrap = new LinearLayout.LayoutParams(-1, -2);

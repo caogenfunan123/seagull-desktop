@@ -708,7 +708,7 @@ public final class PipBoard extends LinearLayout {
             tv.setTextColor(Skin.c(R.color.text));
             tv.setTextSize(13);
             tv.setPadding(p, p - 4, p, p - 4);
-            tv.setBackgroundColor(Skin.c(R.color.card));
+            tv.setBackground(Skin.round(Skin.c(R.color.card), 12f));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
             lp.topMargin = p / 2;
             tv.setLayoutParams(lp);

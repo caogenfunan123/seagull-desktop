@@ -1,12 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  默认取色 = 苹果互联（批次 U）：黑底 / 灰卡片 / 系统蓝。
+  运行时换主题由 Skin.apply 重算，这里只兜底首帧与 XML 常量引用处。
+-->
 <resources>
-    <color name="ground">#ff0b100c</color>
-    <color name="panel">#ff131a15</color>
-    <color name="card">#ff1b241d</color>
-    <color name="leaf">#ff8cc26a</color>
-    <color name="leaf_dim">#ff5d8a45</color>
-    <color name="text">#ffe8efe9</color>
-    <color name="text_dim">#ff9aa79d</color>
-    <color name="bad">#ffe0705f</color>
-    <color name="warn">#ffe0b45f</color>
+    <color name="ground">#ff000000</color>
+    <color name="panel">#ff1c1c1e</color>
+    <color name="card">#ff2c2c2e</color>
+    <color name="leaf">#ff0a84ff</color>
+    <color name="leaf_dim">#ff0060df</color>
+    <color name="text">#ffffffff</color>
+    <color name="text_dim">#ff8e8e93</color>
+    <color name="bad">#ffff453a</color>
+    <color name="warn">#ffff9f0a</color>
 </resources>

@@ -96,7 +96,7 @@ public final class MiniPlayer extends LinearLayout {
         b.setTextColor(Skin.c(R.color.leaf));
         b.setTextSize(13);
         b.setGravity(Gravity.CENTER);
-        b.setBackgroundColor(Skin.c(R.color.card));
+        b.setBackground(Skin.pill(Skin.c(R.color.card)));
         int p = dp(ctx, 12);
         b.setPadding(p, p / 2, p, p / 2);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -1);

@@ -63,7 +63,7 @@ public class RootPanelActivity extends BaseActivity {
         env.setTextColor(Skin.c(R.color.text_dim));
         env.setTextSize(12);
         env.setTypeface(Typeface.MONOSPACE);
-        env.setBackgroundColor(Skin.c(R.color.panel));
+        env.setBackground(Skin.round(Skin.c(R.color.panel), 12f));
         env.setPadding(dp(12), dp(10), dp(12), dp(10));
         col.addView(env);
 
@@ -178,7 +178,7 @@ public class RootPanelActivity extends BaseActivity {
         tv.setTextSize(14);
         tv.setGravity(Gravity.CENTER_VERTICAL);
         tv.setPadding(dp(14), dp(13), dp(14), dp(13));
-        tv.setBackgroundColor(Skin.c(R.color.card));
+        tv.setBackground(Skin.round(Skin.c(R.color.card), 12f));
         tv.setOnClickListener(v -> o.run());
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
         p.topMargin = dp(8);
@@ -189,7 +189,7 @@ public class RootPanelActivity extends BaseActivity {
     private View slider(int min, int max, int cur, final IntCb cb) {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setBackgroundColor(Skin.c(R.color.card));
+        box.setBackground(Skin.round(Skin.c(R.color.card), 12f));
         box.setPadding(dp(14), dp(10), dp(14), dp(6));
 
         final TextView val = new TextView(this);

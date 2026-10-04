@@ -137,7 +137,7 @@ public final class QuickBar {
                 TextView t = new TextView(ctx);
                 t.setText(label);
                 t.setTextColor(Skin.c(R.color.text_dim));
-                t.setTextSize(9);
+                t.setTextSize(11);
                 t.setGravity(Gravity.CENTER);
                 box.addView(t);
             }
@@ -151,7 +151,7 @@ public final class QuickBar {
             TextView t = new TextView(ctx);
             t.setText(key.substring(4).isEmpty() ? "" : fnLabel(key.substring(4)));
             t.setTextColor(Skin.c(R.color.leaf));
-            t.setTextSize(10);
+            t.setTextSize(12);
             t.setGravity(Gravity.CENTER);
             t.setMaxLines(2);
             box.addView(t, new LinearLayout.LayoutParams(-1, 0, 1f));
@@ -166,7 +166,7 @@ public final class QuickBar {
                 TextView t = new TextView(ctx);
                 t.setText(a.label);
                 t.setTextColor(Skin.c(R.color.text_dim));
-                t.setTextSize(9);
+                t.setTextSize(11);
                 t.setMaxLines(1);
                 box.addView(t);
             }

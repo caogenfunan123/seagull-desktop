@@ -72,7 +72,7 @@ public class SearchActivity extends BaseActivity {
         input.setTextSize(16);
         input.setSingleLine(true);
         input.setPadding(dp(12), dp(10), dp(12), dp(10));
-        input.setBackgroundColor(Skin.c(R.color.card));
+        input.setBackground(Skin.pill(Skin.c(R.color.card)));
         root.addView(input, new LinearLayout.LayoutParams(-1, -2));
 
         ScrollView sv = new ScrollView(this);
@@ -118,7 +118,7 @@ public class SearchActivity extends BaseActivity {
         box.setOrientation(LinearLayout.HORIZONTAL);
         box.setGravity(Gravity.CENTER_VERTICAL);
         box.setPadding(dp(12), dp(10), dp(12), dp(10));
-        box.setBackgroundColor(Skin.c(R.color.card));
+        box.setBackground(Skin.round(Skin.c(R.color.card), 12f));
 
         ImageView iv = new ImageView(this);
         Drawable d = model.icon(a);
@@ -135,7 +135,7 @@ public class SearchActivity extends BaseActivity {
         TextView sub = new TextView(this);
         sub.setText(a.pkg + "   " + Pinyin.initials(a.label));
         sub.setTextColor(Skin.c(R.color.text_dim));
-        sub.setTextSize(10);
+        sub.setTextSize(12);
         txt.addView(sub);
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(0, -2, 1f);
         tp.leftMargin = dp(10);

@@ -248,7 +248,7 @@ public final class LauncherModel {
 
     /* ==================== 状态：外观 ==================== */
 
-    public String themeId = "leaf_shadow";     // 见 Theme
+    public String themeId = Theme.DEFAULT_ID;   // 见 Theme（默认「苹果互联」）
     public String customAccent = "";           // 自定义主题色 #RRGGBB
     public DayNight dayNight = DayNight.DARK;
     public String wallDay = "";                // 白天壁纸路径
@@ -1291,7 +1291,7 @@ public final class LauncherModel {
         ballSize = 48;
         ballAlpha = 90;
         /* 外观 */
-        themeId = "leaf_shadow";
+        themeId = Theme.DEFAULT_ID;
         customAccent = "";
         dayNight = DayNight.DARK;
         wallDay = "";

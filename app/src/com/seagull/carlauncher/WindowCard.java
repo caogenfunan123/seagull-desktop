@@ -76,12 +76,12 @@ public final class WindowCard {
         // 顶部小标题条（可拖动）
         LinearLayout bar = new LinearLayout(ctx);
         bar.setGravity(Gravity.CENTER_VERTICAL);
-        bar.setBackgroundColor(0xCC131a15);
+        bar.setBackgroundColor(Skin.bar(Skin.c(R.color.card)));
         bar.setPadding(dp(8), dp(4), dp(8), dp(4));
         TextView title = new TextView(ctx);
         title.setText("镜像卡片 · 拖动可移动 · 长按缩放 · 双击关闭");
-        title.setTextColor(0xFF8CC26A);
-        title.setTextSize(9);
+        title.setTextColor(Skin.c(R.color.text_dim));
+        title.setTextSize(11);
         bar.addView(title, new LinearLayout.LayoutParams(0, -2, 1f));
         FrameLayout.LayoutParams barLp = new FrameLayout.LayoutParams(-1, dp(22));
         barLp.gravity = Gravity.TOP;

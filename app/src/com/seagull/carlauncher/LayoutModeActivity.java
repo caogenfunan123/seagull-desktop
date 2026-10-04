@@ -194,7 +194,7 @@ public class LayoutModeActivity extends BaseActivity {
         tv.setTextSize(14);
         tv.setGravity(Gravity.CENTER);
         tv.setPadding(dp(10), dp(13), dp(10), dp(13));
-        tv.setBackgroundColor(Skin.c(R.color.card));
+        tv.setBackground(Skin.round(Skin.c(R.color.card), 12f));
         tv.setOnClickListener(l);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
         p.topMargin = dp(8);

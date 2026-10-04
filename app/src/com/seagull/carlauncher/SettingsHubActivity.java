@@ -110,7 +110,7 @@ public class SettingsHubActivity extends BaseActivity {
         search.setTextSize(14);
         search.setSingleLine(true);
         search.setPadding(dp(12), dp(10), dp(12), dp(10));
-        search.setBackgroundColor(Skin.c(R.color.card));
+        search.setBackground(Skin.pill(Skin.c(R.color.card)));
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
         sp.topMargin = dp(12);
         search.setLayoutParams(sp);
@@ -221,7 +221,7 @@ public class SettingsHubActivity extends BaseActivity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.VERTICAL);
         row.setPadding(dp(14), dp(12), dp(14), dp(12));
-        row.setBackgroundColor(Skin.c(R.color.card));
+        row.setBackground(Skin.round(Skin.c(R.color.card), 12f));
 
         TextView a = new TextView(this);
         a.setText(s.name);
@@ -247,7 +247,7 @@ public class SettingsHubActivity extends BaseActivity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(14), dp(10), dp(14), dp(10));
-        row.setBackgroundColor(Skin.c(R.color.card));
+        row.setBackground(Skin.round(Skin.c(R.color.card), 12f));
 
         ImageView iv = new ImageView(this);
         Drawable d = model.icon(a);

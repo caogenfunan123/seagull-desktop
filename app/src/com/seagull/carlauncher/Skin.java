@@ -1,5 +1,7 @@
 package com.seagull.carlauncher;
 
+import android.graphics.drawable.GradientDrawable;
+
 /**
  * 运行时配色层（TODO P0-7）。
  *
@@ -23,12 +25,12 @@ public final class Skin {
 
     private Skin() {}
 
-    /** 回到 colors.xml 的默认值（主题没加载时不会白屏）。 */
+    /** 回到 colors.xml 的默认值（主题没加载时不会白屏）。默认 = 苹果互联深色。 */
     public static void reset() {
-        ground = 0xFF0B100C; panel = 0xFF131A15; card = 0xFF1B241D;
-        leaf = 0xFF8CC26A; leafDim = 0xFF5D8A45;
-        text = 0xFFE8EFE9; textDim = 0xFF9AA79D;
-        bad = 0xFFE0705F; warn = 0xFFE0B45F;
+        ground = 0xFF000000; panel = 0xFF1C1C1E; card = 0xFF2C2C2E;
+        leaf = 0xFF0A84FF; leafDim = 0xFF0060DF;
+        text = 0xFFFFFFFF; textDim = 0xFF8E8E93;
+        bad = 0xFFFF453A; warn = 0xFFFF9F0A;
         wallBright = false;
         barAlpha = 0xFF;
     }
@@ -47,6 +49,22 @@ public final class Skin {
         return resId;   // 不是调色板颜色就当它本身就是色值
     }
 
+    /* ---------------- CarPlay 形语（批次 U） ---------------- */
+
+    /** 屏幕密度：apply 时刷新，造形 helpers 直接换算 px，调用点不必传 Context。 */
+    public static float density = 3f;
+
+    /** 圆角矩形底：传已取好的色值 + 圆角 dp。 */
+    public static GradientDrawable round(int color, float dp) {
+        GradientDrawable g = new GradientDrawable();
+        g.setColor(color);
+        g.setCornerRadius(Math.max(0f, dp) * density);
+        return g;
+    }
+
+    /** 胶囊底（按钮 / 把手 / 搜索框）：圆角大到半高以上即成胶囊。 */
+    public static GradientDrawable pill(int color) { return round(color, 999f); }
+
     /** 同一层里带透明度的取色（顶/底栏用）。 */
     public static int bar(int resId) {
         int col = c(resId);
@@ -58,8 +76,30 @@ public final class Skin {
         if (m == null) { reset(); return; }
         int accent = Theme.accent(m);
         boolean light = isLight(m);
+        try {
+            float d = m.context().getResources().getDisplayMetrics().density;
+            if (d > 0) density = d;
+        } catch (Throwable ignore) {}
 
-        if (light) {
+        // 苹果互联（批次 U）：中性灰阶底，不带强调色倾向——CarPlay 的视觉
+        // 语言就是「黑底 + 灰卡片 + 系统蓝」。自定义强调色仍然生效（leaf）。
+        if ("carplay".equals(m.themeId)) {
+            if (light) {
+                ground = 0xFFF2F2F7; panel = 0xFFFFFFFF; card = 0xFFFFFFFF;
+                leaf = accent;
+                leafDim = mix(accent, 0xFF000000, 0.20f);
+                text = 0xFF000000;
+                textDim = mix(0xFF3C3C43, 0xFFFFFFFF, 0.40f);
+                bad = 0xFFFF3B30; warn = 0xFFFF9500;
+            } else {
+                ground = 0xFF000000; panel = 0xFF1C1C1E; card = 0xFF2C2C2E;
+                leaf = accent;
+                leafDim = mix(accent, 0xFF000000, 0.35f);
+                text = 0xFFFFFFFF;
+                textDim = 0xFF8E8E93;
+                bad = 0xFFFF453A; warn = 0xFFFF9F0A;
+            }
+        } else if (light) {
             ground = mix(accent, 0xFFFFFFFF, 0.93f);
             panel = mix(accent, 0xFFFFFFFF, 0.84f);
             card = mix(accent, 0xFFFFFFFF, 0.74f);

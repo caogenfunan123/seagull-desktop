@@ -425,7 +425,7 @@ public class SettingsSectionActivity extends BaseActivity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(14), dp(11), dp(14), dp(11));
-        row.setBackgroundColor(Skin.c(R.color.card));
+        row.setBackground(Skin.round(Skin.c(R.color.card), 12f));
 
         TextView tv = new TextView(this);
         tv.setText(w.name + (w.used ? "  · 正在用" : ""));
@@ -464,10 +464,10 @@ public class SettingsSectionActivity extends BaseActivity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(14), dp(11), dp(14), dp(11));
-        row.setBackgroundColor(on ? Skin.c(R.color.card) : Skin.c(R.color.panel));
+        row.setBackground(Skin.round(on ? Skin.c(R.color.card) : Skin.c(R.color.panel), 12f));
 
         View sw = new View(this);
-        sw.setBackgroundColor(accent);
+        sw.setBackground(Skin.round(accent, 6f));
         LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(dp(20), dp(20));
         row.addView(sw, sp);
 
@@ -1117,7 +1117,7 @@ public class SettingsSectionActivity extends BaseActivity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setPadding(dp(14), dp(12), dp(14), dp(12));
-        row.setBackgroundColor(on ? Skin.c(R.color.card) : Skin.c(R.color.panel));
+        row.setBackground(Skin.round(on ? Skin.c(R.color.card) : Skin.c(R.color.panel), 12f));
         TextView tv = new TextView(this);
         tv.setText((on ? "☑ " : "☐ ") + label);
         tv.setTextColor(on ? Skin.c(R.color.leaf) : Skin.c(R.color.text));
@@ -1138,7 +1138,7 @@ public class SettingsSectionActivity extends BaseActivity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(14), dp(11), dp(14), dp(11));
-        box.setBackgroundColor(l == null ? Skin.c(R.color.panel) : Skin.c(R.color.card));
+        box.setBackground(Skin.round(l == null ? Skin.c(R.color.panel) : Skin.c(R.color.card), 12f));
 
         TextView a = new TextView(this);
         a.setText(title);
@@ -1165,7 +1165,7 @@ public class SettingsSectionActivity extends BaseActivity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(14), dp(10), dp(14), dp(12));
-        box.setBackgroundColor(Skin.c(R.color.card));
+        box.setBackground(Skin.round(Skin.c(R.color.card), 12f));
 
         LinearLayout top = new LinearLayout(this);
         top.setOrientation(LinearLayout.HORIZONTAL);

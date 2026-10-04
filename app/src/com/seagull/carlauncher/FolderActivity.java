@@ -102,7 +102,7 @@ public class FolderActivity extends BaseActivity {
             TextView tv = new TextView(this);
             tv.setText(a.label);
             tv.setTextColor(Skin.c(R.color.text_dim));
-            tv.setTextSize(10);
+            tv.setTextSize(12);
             tv.setMaxLines(1);
             cell.addView(tv);
 
@@ -140,7 +140,7 @@ public class FolderActivity extends BaseActivity {
         tv.setTextSize(14);
         tv.setGravity(Gravity.CENTER);
         tv.setPadding(dp(10), dp(12), dp(10), dp(12));
-        tv.setBackgroundColor(Skin.c(R.color.card));
+        tv.setBackground(Skin.round(Skin.c(R.color.card), 12f));
         tv.setOnClickListener(l);
         return tv;
     }

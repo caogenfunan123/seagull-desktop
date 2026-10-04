@@ -135,7 +135,7 @@ public class DesktopView extends FrameLayout {
         dockHandle.setTextSize(13);
         dockHandle.setTextColor(Skin.c(R.color.text_dim));
         dockHandle.setGravity(Gravity.CENTER);
-        dockHandle.setBackgroundColor(Skin.c(R.color.panel));
+        dockHandle.setBackground(Skin.pill(Skin.c(R.color.panel)));
         dockHandle.setVisibility(GONE);
         dockHandle.setOnClickListener(v -> {
             dockCollapsed = false;
@@ -452,7 +452,7 @@ public class DesktopView extends FrameLayout {
         LinearLayout box = new LinearLayout(getContext());
         box.setOrientation(LinearLayout.VERTICAL);
         box.setGravity(Gravity.CENTER);
-        box.setBackgroundColor(Skin.c(R.color.panel));
+        box.setBackground(Skin.round(Skin.c(R.color.panel), 14f));
         box.setOnLongClickListener(v -> { widgetMenu(id); return true; });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1f);
         lp.setMargins(dp(4), 0, dp(4), 0);
@@ -465,7 +465,7 @@ public class DesktopView extends FrameLayout {
 
         TextView small = new TextView(getContext());
         small.setTextColor(Skin.c(R.color.text_dim));
-        small.setTextSize(10);
+        small.setTextSize(12);
         small.setGravity(Gravity.CENTER);
 
         switch (id) {
@@ -477,7 +477,7 @@ public class DesktopView extends FrameLayout {
                 big.setText(Weather.summary(m));
                 big.setTextSize(15);
                 small.setText(m.weatherForecast.isEmpty() ? Weather.stamp(m) : m.weatherForecast);
-                small.setTextSize(9);
+                small.setTextSize(11);
                 // 9.9 点按获取天气：现在数据取一次，不等 20 分钟
                 box.setOnClickListener(v -> Weather.refresh(getContext(), m, () -> {
                     LauncherModel mm = model();
@@ -491,7 +491,7 @@ public class DesktopView extends FrameLayout {
                 big.setText(w.length == 0 ? "未在播放" : w[0]);
                 big.setTextSize(13);
                 small.setText(w.length > 1 && !w[1].isEmpty() ? w[1] : Lyrics.nowPlaying());
-                small.setTextSize(9);
+                small.setTextSize(11);
                 break;
             default: big.setText("—"); small.setText("空"); break;
         }
@@ -505,7 +505,7 @@ public class DesktopView extends FrameLayout {
         LinearLayout wrap = new LinearLayout(getContext());
         wrap.setOrientation(LinearLayout.VERTICAL);
         wrap.setGravity(Gravity.CENTER);
-        wrap.setBackgroundColor(Skin.c(R.color.panel));
+        wrap.setBackground(Skin.round(Skin.c(R.color.panel), 14f));
         wrap.setOnLongClickListener(v -> { widgetMenu(6); return true; });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -1, 1f);
         lp.setMargins(dp(4), 0, dp(4), 0);
@@ -537,7 +537,7 @@ public class DesktopView extends FrameLayout {
             TextView tv = new TextView(getContext());
             tv.setText(a.label);
             tv.setTextColor(Skin.c(R.color.text_dim));
-            tv.setTextSize(10);
+            tv.setTextSize(12);
             tv.setMaxLines(1);
             tv.setGravity(Gravity.CENTER);
             box.addView(tv);
@@ -664,7 +664,7 @@ public class DesktopView extends FrameLayout {
         TextView tv = new TextView(getContext());
         tv.setText(f.name + " (" + f.keys.size() + ")");
         tv.setTextColor(Skin.c(R.color.text_dim));
-        tv.setTextSize(10);
+        tv.setTextSize(12);
         tv.setMaxLines(1);
         box.addView(tv);
 

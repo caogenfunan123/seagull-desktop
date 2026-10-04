@@ -964,3 +964,48 @@ describe）全过。VD 常驻、部署串行化等链路与批次 M/L 一致，�
 - 决策：黑边先按"密度"修而不是按"尺寸"修 —— VD 尺寸本来就 1:1，唯一可疑
   的就是密度；时钟 App 是判据（应用铺满是 VD 参数问题，只有高德不铺满是
   它自己的小屏版式）。
+
+## 批次 U — CarPlay 风格换皮（新增「苹果互联」预设）
+
+用户拍板范围（question 确认）：**只换皮不动结构**——新增「苹果互联」主题预设 +
+全局圆角语言；PiP 画布的 SurfaceView 保持方角（真圆角待 TextureView 化，单独批次）。
+
+### ① 新预设「苹果互联」
+
+- `Theme` 数组 index 0 新增 `"carplay"` / 显示名「苹果互联」/ 强调色 `#0A84FF`；
+  `DEFAULT_ID = "carplay"`，新装与恢复出厂即此风格（`LauncherModel` themeId 字段默认 +
+  resetScalars 两处同步）。
+- `Skin.apply` 识别 carplay 走 Apple 系统色板：深色底 `ground #000 / panel #1C1C1E /
+  card #2C2C2E / leaf #0A84FF / leafDim #0060DF / text #FFF / textDim #8E8E93 /
+  bad #FF453A / warn #FF9F0A`；浅色底 `#F2F2F7 / #FFF / #FFF / #007AFF /
+  text #000 / textDim 由 0x3C3C43 混 40% 白`。**中性灰阶不带主题色倾向**是 CarPlay
+  的视觉核心；自定义强调色仍可覆盖 leaf（换苹果底 + 自定义蓝不冲突）。
+- `colors.xml` 编译期默认同步成 Apple 深色（首帧兜底不再泛绿）；`styles.xml`
+  colorAccent 本就指向 `@color/leaf`，拾取 Apple 蓝无需改。
+
+### ② 全局圆角语言
+
+- `Skin` 新增造形 helpers：`round(color, dp)` / `pill(color)`（999dp 变胶囊），
+  用静态 `density`（apply 时刷新）换算 px，**调用点不必传 Context**，sweep 机械化。
+  密度兜底 3f（约 xxhdpi）。
+- sweep 27 处 `setBackgroundColor(Skin.c(R.color.card))` 及同型 → `Skin.round(...)`：
+  行/盒/容器 12dp（AppList、Folder、Search、SettingsHub、SettingsSection、RootPanel、
+  VirtualDisplay、WindowTest、PipBoard、LayoutMode、DesktopView 组件卡/快捷栏、
+  HomeActivity 底按钮）；按钮/把手/搜索框/编辑条 pill（HomeActivity chip、MiniPlayer、
+  DesktopView dockHandle、Search 输入、SettingsHub 搜索行）；SettingsSection 色片 6dp。
+- 保持平面的 15 处：全屏 ground、dockBar、PipBoard 画布容器、顶/底栏（CarPlay
+  栏本就用平底）。WindowCard 标题条原是写死绿 `0xCC131a15`，改走
+  `Skin.bar(Skin.c(R.color.card))` + textDim（换肤后浮动卡片不再掉色）。
+
+### ③ 可读性微抬
+
+CarPlay 风格上 9/10sp 偏小：全部 9sp→11sp、10sp→12sp（QuickBar×3、DesktopView×4、
+WindowCard 标题、AppList/Folder/Search 副文案）。
+
+### 验收口径（真机）
+
+1. 新装/恢复出厂默认进「苹果互联」；主题切到「薄荷」/「叶影」再切回，颜色齐全回位
+2. 桌面：编辑条、chip、dock 把手、组件卡、快捷栏均为弧度/胶囊；其余区域纯平面
+3. 画中画两块画布 Surface 仍为方角、无圆角伪影（预期行为）
+4. 浮动卡片（WindowCard）标题条跟随当前主题变色
+5. 小字号屏幕：QuickBar / 应用列表副文案可读，无拥挤

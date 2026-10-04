@@ -374,7 +374,7 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         edit.setTextColor(editing ? Skin.c(R.color.leaf) : Skin.c(R.color.text));
         edit.setTextSize(13);
         edit.setPadding(dp(12), dp(7), dp(12), dp(7));
-        edit.setBackgroundColor(Skin.c(R.color.card));
+        edit.setBackground(Skin.pill(Skin.c(R.color.card)));
         edit.setOnClickListener(v -> {
             desktop.editMode = !desktop.editMode;
             buildTopBar();
@@ -396,7 +396,7 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         tv.setTextColor(Skin.c(R.color.text));
         tv.setTextSize(13);
         tv.setPadding(dp(12), dp(7), dp(12), dp(7));
-        tv.setBackgroundColor(Skin.c(R.color.card));
+        tv.setBackground(Skin.pill(Skin.c(R.color.card)));
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
         lp.leftMargin = dp(8);
         tv.setLayoutParams(lp);
@@ -435,7 +435,7 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
         tv.setTextColor(Skin.c(colorRes));
         tv.setTextSize(13);
         tv.setGravity(Gravity.CENTER);
-        tv.setBackgroundColor(Skin.c(R.color.card));
+        tv.setBackground(Skin.round(Skin.c(R.color.card), 12f));
         tv.setOnClickListener(l);
         return tv;
     }

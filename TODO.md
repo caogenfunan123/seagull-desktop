@@ -377,3 +377,11 @@
 - [ ] RootMain：thread-per-connection 无上限（本家连接数固定，风险低，记录备查）
 - [ ] BootReceiver：MY_PACKAGE_REPLACED 分支绕过 autoHome 直接 pull（设计如此还是 bug，待判）
 - [ ] LauncherModel：loadApps 主线程全机枚举；WallpaperActivity 全文件系统 loadLabel
+
+### P2-17 批次 U CarPlay 换皮验收（skin-only：预设 + 圆角 + 字号）🟡 代码已写，typecheck 过 + 123 项自检过，真机待验
+- [ ] 新装/恢复出厂默认「苹果互联」；主题页可切到其他预设并切回，色值齐全
+- [ ] 外观页强调色：自定义颜色覆盖 leaf 时，底仍是中性灰（不串色）
+- [ ] 桌面圆角：编辑条/chip/dock 把手/组件卡/快捷栏为圆角或胶囊；应用页行、设置页行、搜索输入同
+- [ ] 画中画两块画布 Surface 保持方角（预期），标题条与浮动卡片颜色跟随主题
+- [ ] 小字号可读：QuickBar、应用列表、应用详情副文案在新字号下不拥挤
+- [ ] 版本升级覆盖安装（旧随机签名包→新包需先卸载一次，装后确认默认主题=苹果互联）
