@@ -186,6 +186,22 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 `conclusion == success` 才算构建通过；失败就读 job log 里的 `== N/7 ==` 定位步骤。
 若本机有完整 SDK，也可以 `SEAGULL_SDK=... SEAGULL_ANDROID_JAR=... bash app/build.sh` 自出包（产物在 `app/out/`）。
 
+推送与签名核对（git 凭据 helper 在本环境间歇 500，用 token URL 兜底；每次推送必做）：
+
+```bash
+TOKEN=$(sed -nE 's#https://[^:]+:([^@]+)@github.com.*#\1#p' /root/.git-credentials)
+git -c credential.helper= push https://x-access-token:$TOKEN@github.com/caogenfunan123/seagull-desktop.git main:main
+
+# CI 状态轮询
+export GH_TOKEN=$TOKEN
+gh api repos/caogenfunan123/seagull-desktop/actions/runs --jq '.workflow_runs[0] | "\(.status) \(.conclusion // "-")"'
+
+# 签名核对：本机包与 CI 产物必须是同一把钥匙（SIGNING.md 的 seagull-release）
+/tmp/opencode/android-sdk/android-14/apksigner verify --print-certs \
+  app/out/SeagullLauncher.apk | grep -m1 "SHA-256"
+# 期望：8a13f859cba0f1b8082e5c8302e5142b802a2cebacc446b695bfb91fa58391fa
+```
+
 ### 6.3 真机
 
 容器里做不了的事：root 命令是否被这台 ROM 接受、悬浮窗授权、录屏授权、车机上的实际布局与性能。

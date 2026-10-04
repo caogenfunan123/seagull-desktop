@@ -341,3 +341,39 @@
 ### P2-14 批次 S 遗留：Android 14 录屏 token 单次有效 ⚪ 低优先（兜底路径）
 - [ ] API 34 上 resultData 一次性：pollToken 第二次 getMediaProjection 必抛 SecurityException，现有 catch+共用降级+日志在位（嵌套画面风险仅存在于私有屏+TRUSTED 都失败且 Android 14 的组合）
 - [ ] 根治：needProj 且 API>=34 时连续弹两次授权（每槽各一次），token 各自消费
+
+### P2-15 批次 T 全库复盘修复验收（安全 3 / 正确性 8 / 性能 3 / 健壮性 2）🟡 代码已写，typecheck/自检过，真机待验
+- [ ] SysOps 白名单：设置→「强制停止应用」输 `com.foo; rm -rf /` / 空串 / 非法包名，应 toast「参数不合法」且不执行；合法包名 force-stop 仍正常（`FAIL/OK` 文案不变）
+- [ ] RootMain 双 uid 修复（重点）：普通安装下 daemon 现在应接受本家连接——`adb shell` 直接 `logcat -s SeagullPrivd` 重启 app 后应无「拒绝非特权 peer uid=10xxx」；同时确认 adb shell 连接仍被拒（uid=2000 不再放行）
+- [ ] 点图标启动：桌面图标 / Dock / 文件夹内图标点开应用应真的启动（旧实为静默失败）；`logcat -s SeagullModel` 不应再出现「启动失败 … AndroidRuntimeException」
+- [ ] 布局页列表：设置→桌面→布局，「桌面布局」应立即列出 7 个模式（旧实现永远空白）；点切换 + 组件开关仍正常
+- [ ] 「开机自动回桌面」开关关掉后重启，桌面不应被拉起（旧实现恒 true）；开启仍拉起
+- [ ] 组件条长按加组件：应能加「歌词」「快捷栏」（旧实现点了没反应）；加满 4 个继续加应 toast「组件都放满了」
+- [ ] 任务搬屏：双槽下收回/拉回，目标应是正确屏上的任务（displayId 边界修复）
+- [ ] 同名文件夹：建两个同名文件夹，桌面应各占一个图标（旧实现只显示一个）
+- [ ] 配置导入：喂一份语法对、语义错的 JSON（缺必填字段的壳），导入应失败且重启后配置保持导入前的值（旧实现会污染存档）
+- [ ] 恢复出厂：改字号 130% / Dock 全配置 / 菜园 / 小白点 / 野菜岛 / 天气城市 / 歌词 / 触摸阈值后恢复出厂，全部应回默认值（旧实现只回 16 个标量）
+- [ ] 性能体感：连点多个设置开关、长按拖动图标，主线程不应再有 commit() 同步卡顿；桌面反复重画图标不重新解码（省电流量无回归）
+- [ ] 歌词长播 10 分钟以上，歌词行应仍跟上播放进度（15 跳锚定修复漂移）
+- [ ] 换肤/换壁纸来回切多次，`dumpsys` 看 DesktopView 实例不累积（sink 泄漏修复）；画中画 Surface 无重复（cancelPending 修复）
+- [ ] 检查更新→下载安装包：文件名形如 `seagull-1.1.apk`（tag_name 消毒），落盘 `files/updates/`，安装 intent 正常弹出
+
+### P2-16 批次 T 遗留：代理发现但未亲自复核的项（下批复盘逐项读码坐实）⚪ 未复核
+- [ ] GardenActivity：`dp(ballX)` 疑似双倍密度换算（dp 函数又乘 densityDpi）；菜园时钟不走字（无 ticker）
+- [ ] BallService：长按与单击两个 Runnable 都触发；tap 区域判定
+- [ ] RootPanelActivity：主线程 su×2（hasRoot + rootWho）ANR 风险；reload 同线程又 su×2
+- [ ] VirtualDisplayHost：create/release 未同步、displayId 非 volatile；launchViaRoot 在 attach 前抛 IllegalStateException
+- [ ] WindowTestActivity：refresh 主线程 su；vd.getDisplay() 未判空 NPE
+- [ ] Lrc：BOM 未 trim；`[mm:99]` 非法秒；重复时间戳
+- [ ] Pinyin：`Locale.getDefault()` 土耳其语 I 问题；输入无上限
+- [ ] Theme：accent 校验过松（`#`/`123` 能过，随后 parseColor 崩）
+- [ ] MediaListenerService：通知日志打印歌名/歌手正文（隐私）；playPause 快照竞态
+- [ ] Wallpaper：读路径流泄漏；主线程解码；purgeWalls 删当前壁纸；孤儿文件不清理
+- [ ] SettingsSection：定时器 HHMM 误解析（730=12:10 非 07:30）；默认值 -1 永不到点；delayMs int 溢出；换肤后 Skin.apply 时机
+- [ ] SelfTest/SelfTestMirror：自检会改设备亮度/音量（副作用应只读）；mirror 结果未校验
+- [ ] TaskEngine：触发条件从 name 每次重算（改任务名=改触发）
+- [ ] HomeActivity：自带的 unused import/prefs；island sink 与 DesktopView sink 双轨并存时的顺序
+- [ ] DesktopView：dispatchDraw/dragLayer 每帧分配；`f.keys.get(0)` 空文件夹 AIOOBE
+- [ ] RootMain：thread-per-connection 无上限（本家连接数固定，风险低，记录备查）
+- [ ] BootReceiver：MY_PACKAGE_REPLACED 分支绕过 autoHome 直接 pull（设计如此还是 bug，待判）
+- [ ] LauncherModel：loadApps 主线程全机枚举；WallpaperActivity 全文件系统 loadLabel

@@ -108,6 +108,92 @@ NEVER_FIX_ORIENTATION 的接受度未验证，失败仅记日志。
 
 ---
 
+## 批次 T — 全库代码复盘（65 文件）：坐实 16 处问题（安全 3 / 正确性 8 / 性能 3 / 健壮性 2），杀掉 2 个误报
+
+**目标**：用户要求「把整个项目代码都复盘一遍，看有没有 bug、性能问题、安全风险，有就修复」。
+8 个并行审查代理全库扫过（60s 超时省缺），我再逐项亲自读码复核——
+**每条发现必须自己从代码推出才动手**，杀掉 2 个确凿的误报（见下）。
+
+**复核坐实 & 已修（16 处）**
+
+安全：
+1. **SysOps 注入**：`forceStop/killBackground/clearCache/grant/installApk` 参数零校验直拼
+   `su -c`；UI 入口 `SettingsSectionActivity`「强制停止应用」的用户输入文本直达。
+   → 新增 `safePkg/safePath/safePerm` 白名单（包名两段 [A-Za-z0-9_]，路径禁空格/;/&/..，权限名点分段），不过直接返回「参数不合法」。
+2. **RootMain uid 白名单双误**：①放行 SHELL_UID(2000)——adb shell 连抽象 socket 即可以
+   root 通道拉起虚拟屏/转发触摸，KernelSU 同意框白给；②白名单只有 0/1000/2000，
+   **不含本家 uid(10xxx)——普通安装下 launcher 自己的连接全被拒**，PRIV_LAUNCH/MOTION/MOVE
+   全程静默降级成 shell 慢通道。→ 撤 SHELL_UID；新增 `selfUid()`（反射
+   `Process.getUidForName` → 回落 `dumpsys package` 的 userId=/appId= 双通道）放行本家。
+3. **下载文件名注入**：`downloadApk` 用 GitHub release tag_name 直拼文件名（可 `../`
+   穿越）。→ `safeVer()` 只留 [A-Za-z0-9._-] 且限长；下载落盘同时收敛到 `files/updates/`
+   子目录，与 `file_paths.xml` 的 `path="updates"` 对齐（旧 path="." 把整个 files/ 圈进映射）。
+
+正确性：
+4. **`LauncherModel.launch()` 死路**：ctx 是 applicationContext，`asNewTask=false` 不加
+   FLAG_ACTIVITY_NEW_TASK → startActivity 必抛 AndroidRuntimeException 被 catch 吞 →
+   桌面图标/Dock/文件夹点开应用静默无响应（DesktopView/QuickBar/FolderActivity 全链路）。
+   → NEW_TASK 恒加（asNewTask 参数保留）。
+5. **`LayoutModeActivity` 布局列表永远空**：`rebuildRows()` 往旧 listCol 填完行又
+   `setContentView(build())` 换一棵全新的空树，行随旧树被丢弃；首屏更是没人调它。
+   → `build()` 内 `fillModeRows()`，`rebuildRows()` 只整树重建。
+6. **`BootReceiver` 读错 key**：读顶层 SP 的 `"autoHome"`，而模型存在 K_LAYOUT JSON 里
+   （`save()` 的 `o.put("autoHome")`）——「开机自动回桌面」开关恒为默认 true。
+   → 改走 `new LauncherModel(ctx, false).autoHome`。
+7. **`TaskMover.frontTask` grep 无边界**：`displayId=1` 会命中 `displayId=10/11…` 的行，
+   收回/拉回搬错屏上的任务。→ `'displayId=N[^0-9]'` 边界；`taskId=` 加 `\b`。
+8. **`homeKeys` 同名文件夹去重**：`covered.add(f.name)` 按名字去重，两个同名文件夹
+   只有一个能在桌面占位。→ 改按 Folder 身份（LinkedHashSet + Folder 无 equals）。
+9. **`toggleWidget` 死按钮**：`id > 4` 硬编码把 5(歌词)/6(快捷栏) 丢掉，而
+   `DesktopView.makeWidget` 两个渲染器都在、菜单也列 7 项。→ 放开到 0~6 并返回
+   boolean，满 WIDGET_MAX 时菜单给 toast 反馈；`load()` 钳制同步放到 0~6。
+10. **`importScheme` 先写后读**：语法对、语义错的存档让 load 抛异常，方法返 false 但
+    存档已被污染，重启停在 defaults，用户以为导入失败、配置已丢。→ catch 里撤回 prev
+    并重新 load。
+11. **`QuickBar.tap()` NPE**：`@fn:` 分支不判 null 直接 `host.model().context()`，
+    Activity 销毁窗口期点功能按钮必崩。→ 与应用分支同样先判空。
+
+性能：
+12. **`LauncherModel.save()` `commit()`**：配置保存全在主线程（拖动/开关），commit 同步
+    fsync 大存档卡几十毫秒。→ `apply()`。
+13. **图标无缓存**：`icon()` 每次 `getApplicationIcon` = 一趟 Binder + 位图解码，
+    桌面重画/拖动/组件条刷新全靠它。→ `LruCache(96)`，命中时从 ConstantState 取
+    独立副本（共享位图无解码，各 View bounds 不打架）。
+14. **`Lyrics` pos 漂移**：播放中纯墙钟累加，postDelayed 真实间隔误差长播漂出秒级。
+    → 每 15 跳用 `ps.getPosition()+now-getLastPositionUpdateTime()` 重新锚定。
+
+健壮性：
+15. **`factoryReset` 名不副实**：`resetScalars()` 只回 16 个标量，Dock/菜园/小白点/
+    野菜岛/天气/歌词/窗口/触摸/快捷按钮全系列漏重置（用户实测过：重置后字号还是 130%）。
+    → 补全全部标量字段。
+16. **两处泄漏/健壮**：`DesktopView` 歌词 sink 构造时匿名注册、从不摘除，换肤重建
+    每次泄漏一整棵旧视图树 → 单实例 + onAttached/onDetached 配套；`HomeActivity` 换肤
+    重建时旧 PipBoard 的 redeploy/selfHeal 回调无人摘 → 新增 `PipBoard.cancelPending()`
+    在重建前调。另：`Lyrics.http()` 加 1MB 回包封顶。
+
+**复核后杀掉的误报（记录判据，避免下批复盘又报一遍）**
+
+- **WindowCard AUTO_MIRROR「未持 MediaProjection 会 SecurityException」**：误报。
+  构造即持 `MediaProjection projection`（:41/:56-58），AUTO_MIRROR+投影是标准镜像写法；
+  且 attach 失败只记日志、不会走到 close()。
+- **Lyrics `getActiveSessions(null)`「换歌链路死」**：误报。:199 有歌名/歌手比对，
+  变化即 `lookup` 重查；会话为空是通知监听权限门槛，属设计行为。
+- **SeagullFileProvider「file_paths.xml path='.' 暴露整个 files/」**：误报。
+  这是手写 ContentProvider，根本不读 file_paths.xml，`fileFor` 有 canonical 前缀校验。
+  XML 仍顺手收紧（防将来换成真 FileProvider 时踩坑）。
+
+**验证**：typecheck OK；自检 6 套全过（PrivCodec/Transform/StackList/DumpParse/Lrc/
+TrustedFlags）；真机验收口径见 TODO P2-15。
+
+**遗留**：代理发现里未亲自复核的项（GardenActivity dp 双倍密度+时钟不走字、BallService
+长按/点按双触发、RootPanelActivity 主线程 su×2、VirtualDisplayHost 未同步、Lrc BOM/
+[mm:99]、Pinyin locale、Theme accent 弱校验、MediaListenerService 打印通知正文、
+Wallpaper 流泄漏、SettingsSection 定时器 HHMM 误解析、SelfTest 改设备亮度/音量、
+Skin.apply 时机等）列 TODO P2-16，下批复盘继续。RootMain 线程-per-连接无上限
+（本家连接数固定，风险低）记 P2-16。
+
+---
+
 ## 批次 A — P0-3 文件夹闭环 + P0-4 应用搜索
 
 **目标**：长按 A 拖到 B 上生成文件夹；搜索按名称/包名/拼音首字母过滤。
