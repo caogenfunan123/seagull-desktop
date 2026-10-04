@@ -199,7 +199,7 @@ gh api repos/caogenfunan123/seagull-desktop/actions/runs --jq '.workflow_runs[0]
 # 签名核对：本机包与 CI 产物必须是同一把钥匙（SIGNING.md 的 seagull-release）
 /tmp/opencode/android-sdk/android-14/apksigner verify --print-certs \
   app/out/SeagullLauncher.apk | grep -m1 "SHA-256"
-# 期望：8a13f859cba0f1b8082e5c8302e5142b802a2cebacc446b695bfb91fa58391fa
+# 期望：8a13f859f2e44a113c6c52b68040703cf78b9d3b711ad440f490e820054a91fa
 ```
 
 ### 6.3 真机
