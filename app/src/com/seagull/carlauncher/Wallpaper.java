@@ -34,22 +34,22 @@ public final class Wallpaper {
         File dir = new File(m.context().getFilesDir(), "walls");
         if (!dir.exists() && !dir.mkdirs()) return null;
         File f = new File(dir, System.currentTimeMillis() + ".img");
-        try {
-            InputStream in = m.context().getContentResolver().openInputStream(uri);
+        try (InputStream in = m.context().getContentResolver().openInputStream(uri)) {
             if (in == null) return null;
-            FileOutputStream out = new FileOutputStream(f);
-            byte[] buf = new byte[8192];
-            int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-            out.close();
-            in.close();
+            try (FileOutputStream out = new FileOutputStream(f)) {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            }
         } catch (Throwable t) {
             android.util.Log.w("SeagullWall", "导入壁纸失败", t);
+            f.delete();   // 半截文件不留盘（旧实现异常路径泄漏流 + 残留孤儿文件）
             return null;
         }
         if (!m.addWall(name == null || name.isEmpty() ? "壁纸 " + (m.wallLib.size() + 1) : name,
                 f.getAbsolutePath())) {
-            return null;   // 库满了（原文案：上限 24，满了给提示）
+            f.delete();   // 库满了进不了库，盘上也不能留孤儿
+            return null;
         }
         return new LauncherModel.Wall(name, f.getAbsolutePath());
     }

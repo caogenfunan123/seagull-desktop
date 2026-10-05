@@ -748,11 +748,20 @@ public final class LauncherModel {
 
     public void removeWall(Wall w) {
         wallLib.remove(w);
-        if (w != null) {
-            if (w.path != null && w.path.equals(wallDay)) wallDay = "";
-            if (w.path != null && w.path.equals(wallNight)) wallNight = "";
+        String p = (w == null) ? null : w.path;
+        if (p != null) {
+            if (p.equals(wallDay)) wallDay = "";
+            if (p.equals(wallNight)) wallNight = "";
         }
         save();
+        // 库条目删了，盘上的图跟着删；只认本机 walls 目录，外部路径一律不碰
+        if (p != null) {
+            try {
+                java.io.File f = new java.io.File(p);
+                java.io.File walls = new java.io.File(context().getFilesDir(), "walls");
+                if (f.exists() && walls.equals(f.getParentFile())) f.delete();
+            } catch (Throwable ignore) {}
+        }
     }
 
     public void useWall(Wall w, boolean night) {

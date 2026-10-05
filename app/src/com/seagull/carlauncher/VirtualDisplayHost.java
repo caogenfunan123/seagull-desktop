@@ -43,8 +43,12 @@ public final class VirtualDisplayHost {
 
     public int displayId() { return displayId; }
 
-    /** 第一步：建虚拟屏。返回 displayId，失败 -1。 */
-    public R create(Context ctx, int w, int h, int dpi) {
+    /**
+     * 第一步：建虚拟屏。返回 displayId，失败 -1。
+     * 与 release() 互斥：排障页每个按钮各起一条线程，连点两下就是跨线程竞态，
+     * 最坏 release 后 create 又把 displayId 写回去，屏永远释放不掉（批次 V 坐实）。
+     */
+    public synchronized R create(Context ctx, int w, int h, int dpi) {
         release();
         try {
             DisplayManager dm = (DisplayManager) ctx.getSystemService(Context.DISPLAY_SERVICE);
@@ -199,7 +203,7 @@ public final class VirtualDisplayHost {
         }
     }
 
-    public void release() {
+    public synchronized void release() {
         if (vd != null) {
             try { vd.release(); } catch (Throwable ignore) {}
             vd = null;

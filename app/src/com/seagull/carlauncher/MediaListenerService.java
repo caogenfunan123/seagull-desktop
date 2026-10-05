@@ -63,17 +63,8 @@ public class MediaListenerService extends NotificationListenerService {
     }
 
     @Override public void onNotificationPosted(StatusBarNotification sbn) {
-        if (sbn == null || sbn.getNotification() == null) return;
-        try {
-            String pkg = sbn.getPackageName();
-            android.os.Bundle ex = sbn.getNotification().extras;
-            if (ex == null) return;
-            CharSequence title = ex.getCharSequence(android.app.Notification.EXTRA_TITLE);
-            CharSequence text = ex.getCharSequence(android.app.Notification.EXTRA_TEXT);
-            Log.i(TAG, "通知 " + pkg + " | " + title + " | " + text);
-        } catch (Throwable t) {
-            Log.w(TAG, "解析通知失败", t);
-        }
+        // 本服务只借「通知监听器」身份拿 getActiveSessions 的调用权，
+        // 通知内容不参与任何逻辑 —— 打进 logcat 反而把用户通知正文漏给 adb/bugreport（批次 V 撤掉）。
     }
 
     @Override public void onNotificationRemoved(StatusBarNotification sbn) {}

@@ -1009,3 +1009,79 @@ WindowCard 标题、AppList/Folder/Search 副文案）。
 3. 画中画两块画布 Surface 仍为方角、无圆角伪影（预期行为）
 4. 浮动卡片（WindowCard）标题条跟随当前主题变色
 5. 小字号屏幕：QuickBar / 应用列表副文案可读，无拥挤
+
+## 批次 V — P2-16 遗留 17 项逐条复盘（亲自读码坐实 / 杀误报）
+
+范围：批次 T 期间代理报了 17 项但未经亲自复核的清单（P2-16）。本批逐项读码，
+坐实 12 处修掉，杀 14 项误报，另坐实 2 项架构级问题列 P2-18 下批做。
+
+### 坐实修复（按文件）
+
+- **GardenActivity**：① 叶子坐标 `dp(ballX)` 双倍换算——ballX/ballY 由 BallService.snap
+  存的是**像素**（lp.x/lp.y），这里再过 dp()，440dpi 机上叶子飞到 2.75 倍远；
+  改直接用像素并钳屏内。② 时钟不走字——build 只画一帧，补 Handler 每秒刷新
+  时钟与日期（onResume 起、onPause 停）。
+- **BallService**：长按 500ms 弹菜园后松手，`!moved` 仍成立 → tap() 又把桌面盖上。
+  补 longFired 标志位，长按已发就不再 tap。
+- **RootPanelActivity**：onResume 主线程跑 envInfo = 2 次真实 su 落地
+  （settings get + dumpsys focus，各 3s 超时）；hasRoot 冷缓存首调也压主线程。
+  两者挪后台线程回贴 UI；root 探测先画 UI 后台补警示条。
+- **WindowTestActivity**：同型——Caps.report 冷缓存时主线程起 su；排障页恰恰最常被
+  adb 直启，缓存最可能冷。挪后台线程。
+- **VirtualDisplayHost**：create/release 加 synchronized——排障页每个按钮各起一条
+  线程（btn() 里 new Thread），连点两下就是跨线程竞态：release 后 create 把
+  displayId 写回去，屏永远释放不掉。（volatile 指控被 synchronized 连带覆盖；
+  「attach 前 launchViaRoot 抛 ISE」不可达——attach 恒在 onCreate 先行，杀。）
+- **Lrc**：① BOM（U+FEFF）trim() 剥不掉 → 首行时间戳对不上行首被丢，parse 入口剥。
+  ② 超长 [mm:…] 让 parseLong 抛 NFE——lookup 的 MAIN.post 里那次调用会把
+  **主线程崩掉**（外层 catch 只包 POOL 线程），时间戳解析就地兜 NFE break。
+  [mm:99] 与重复时间戳是宽容解析/设计内行为，杀。
+- **MediaListenerService**：onNotificationPosted 把每条通知标题+正文打进 logcat——
+  本服务只借监听器身份拿 getActiveSessions 调用权，通知内容零用途，纯隐私泄漏，撤。
+  playPause 快照竞态两个方向都收敛为 no-op，杀。
+- **Wallpaper/LauncherModel**：① importImage 异常路径流泄漏（无 finally）→
+  try-with-resources，半截文件落盘即删。② 库满 addWall 失败时孤儿文件残留 → 删。
+  ③ removeWall 只删库条目**永不删盘上文件**，「恢复出厂清空壁纸库」后 walls 目录
+  全是孤儿 → 删条目时连带删文件（只认 files/walls 目录，外部路径不碰）。
+- **SelfTest**：自检把用户亮度钉死 128、音量打到 7 且不还原 → 亮度写后还原
+  （保留写通道验证），音量没有可靠读回 API 改只读探针。
+- **HomeActivity**：prefs 字段死代码（PREFS 常量另有他用保留）——删字段/赋值/import。
+  island 与 DesktopView 双 sink 是设计内多订阅，杀。
+- **DesktopView**：dispatchDraw 逐帧 new Rect/int[2] → 预分配字段复用。
+  空文件夹 AIOOBE 杀：load（folders.add 前 isEmpty 检查）与自动整理（<2 键即解散）
+  双层修剪，瞬时态同线程内消化，get(0) 不可达空列表。
+- **BootReceiver**：判定出一个结构性错位——fireBoot 嵌在 pull() 里，**关「开机回桌面」
+  会连带吞掉全部开机任务**；而 MY_PACKAGE_REPLACED 更新路径又无视开关硬拉界面 +
+  重放开机任务。重构：autoHome 只管拉不拉界面（开机/更新都尊重）；开机任务与
+  悬浮球自启只在真 BOOT 走（更新后 sticky 服务系统自己会拉起，不重放任务）。
+- **SettingsSectionActivity**：① 定时解析与提示词自相矛盾——「730 表示 07:30」实际
+  当成第 730 分钟 = 12:10；按 HHMM 口径解析（730 → 07:30，h≤23/m≤59 校验）。
+  ② 延迟秒数 >约 24.8 天时 `*1000` 把 int 顶成负数，任务反而**立即触发**；
+  改 long 解析 + 7 天上限。③ render() 从不重跑 Skin.apply——主题页里改主题，
+  页面自己还挂着旧色板；render 前补 Skin.apply。（「默认 -1 永不到点」杀：
+  describe() 显式标未定且可编辑。）
+
+### 杀掉的误报（9 项 + 2 项记录在案）
+
+tap 区域判定（slop 逻辑成立）、VirtualDisplayHost volatile（synchronized 覆盖）、
+launchViaRoot attach 前 ISE（不可达）、WindowTest getDisplay NPE（catch Throwable 兜住）、
+Lrc [mm:99]/重复时间戳、Pinyin 土耳其 I（已全程 Locale.ROOT）与输入无上限（缓存 400 上限）、
+Theme accent 校验过松（两条路径都有 try/catch，全工程无裸 parseColor）、playPause 竞态、
+purgeWalls 删当前壁纸（函数不存在，实际问题是反向的 removeWall 不删文件，已修）、
+SelfTestMirror 结果未校验（taskOnDisplay 三处核对在位）、TaskEngine name 重算（触发是
+持久化枚举字段）、空文件夹 AIOOBE、island sink 双轨、RootMain thread-per-connection
+（本家连接数固定 + 空闲看门狗，维持记录备查）、WallpaperActivity loadLabel（该类不存在）。
+
+### 坐实但架构级，列 P2-18
+
+- loadApps() 主线程全机枚举：6 个页面 onCreate 直调（Home/Search/AppList/Settings×2/
+  VirtualDisplay），bloaty 设备上 queryIntentActivities 100ms+。异步化要给 6 个页面
+  补回调/占位渲染，超出"小修"范畴。
+- 壁纸主线程解码：loadForScreen 在 Garden/Desktop/Home 的 onCreate 里同步 decode；
+  后台加载管线连带三处渲染时机改造。
+
+### 复盘
+
+- P2-16 的 17 项里 14 项是误报——代理批量扫出的"嫌疑清单"价值在于圈定阅读范围，
+  结论仍必须自己读码下。本批两处最有价值的收获（主线程崩 Lrc NFE、BootReceiver
+  开关吞任务）都是复核过程中顺藤摸出的新问题，清单本身都没点名。

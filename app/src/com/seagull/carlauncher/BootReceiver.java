@@ -13,18 +13,26 @@ public class BootReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context ctx, Intent intent) {
         String a = intent == null ? null : intent.getAction();
         Log.i(TAG, "onReceive " + a);
-        if ("android.intent.action.MY_PACKAGE_REPLACED".equals(a)) {
-            pull(ctx);
-            return;
-        }
-        // autoHome 存在布局存档的 JSON 里（LauncherModel.save 的 K_LAYOUT），
-        // 旧实现读顶层 SP 的 "autoHome" 键——模型从不写这个键，
-        // 「开机回桌面」开关永远是默认 true（批次 T 复盘坐实）
+        // 「开机回桌面」开关只管要不要拉回界面：开机与自更新都尊重它
+        // （批次 V 判定：旧实现更新路径无视开关硬拉；开机任务又被这开关连带吞掉）
         boolean auto = new LauncherModel(ctx, false).autoHome;
-        if (auto) pull(ctx);
+        if (auto) toHome(ctx);
+        if ("android.intent.action.MY_PACKAGE_REPLACED".equals(a)) return;
+        // 开机任务与悬浮球自启只在真开机走：自更新重放会双触发（sticky 服务系统自己会拉起）
+        try {
+            TaskEngine.fireBoot(ctx);
+        } catch (Throwable t) {
+            Log.w(TAG, "开机任务失败", t);
+        }
+        try {
+            LauncherModel m = new LauncherModel(ctx, false);
+            if (m.ballEnabled) BallService.setEnabled(ctx, true);
+        } catch (Throwable t) {
+            Log.w(TAG, "拉起悬浮球失败", t);
+        }
     }
 
-    private void pull(Context ctx) {
+    private void toHome(Context ctx) {
         try {
             Intent i = new Intent(ctx, HomeActivity.class)
                     .setAction(Intent.ACTION_MAIN)
@@ -33,19 +41,6 @@ public class BootReceiver extends BroadcastReceiver {
             ctx.startActivity(i);
         } catch (Throwable t) {
             Log.w(TAG, "拉回桌面失败", t);
-        }
-        // 13.3 系统启动触发的任务
-        try {
-            TaskEngine.fireBoot(ctx);
-        } catch (Throwable t) {
-            Log.w(TAG, "开机任务失败", t);
-        }
-        // 悬浮球跟着开机自启（依赖 LauncherModel 里的 ballEnabled）
-        try {
-            LauncherModel m = new LauncherModel(ctx, false);
-            if (m.ballEnabled) BallService.setEnabled(ctx, true);
-        } catch (Throwable t) {
-            Log.w(TAG, "拉起悬浮球失败", t);
         }
     }
 }

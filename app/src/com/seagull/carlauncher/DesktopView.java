@@ -51,6 +51,10 @@ public class DesktopView extends FrameLayout {
     private LinearLayout dockBar;
     private TextView dockHandle;
     private FrameLayout dragLayer;
+    /* 拖拽高亮的复用对象：dispatchDraw 逐帧跑，旧实现每帧 new Rect/int[2]（批次 V） */
+    private final android.graphics.Rect hiRect = new android.graphics.Rect();
+    private final int[] hiLoc = new int[2];
+    private float hiInset, hiRadius;
 
     /** 编辑模式：开着才能拖拽（避免误触），由外部按钮切换。 */
     public boolean editMode = false;
@@ -144,16 +148,17 @@ public class DesktopView extends FrameLayout {
         addView(dockHandle, new FrameLayout.LayoutParams(dp(30), dp(76), Gravity.LEFT));
 
         // 拖拽层：浮在最上面画拖拽态与高亮
+        hiInset = dp(3); hiRadius = dp(10);
         dragLayer = new FrameLayout(getContext()) {
             @Override protected void dispatchDraw(Canvas canvas) {
                 super.dispatchDraw(canvas);
                 if (dropTarget != null && dropTarget != dragView) {
-                    Rect r = new Rect();
-                    dropTarget.getGlobalVisibleRect(r);
-                    int[] me = new int[2]; getLocationOnScreen(me);
-                    r.offset(-me[0], -me[1]);
-                    r.inset(dp(3), dp(3));
-                    canvas.drawRoundRect(r.left, r.top, r.right, r.bottom, dp(10), dp(10), hiPaint);
+                    dropTarget.getGlobalVisibleRect(hiRect);
+                    getLocationOnScreen(hiLoc);
+                    hiRect.offset(-hiLoc[0], -hiLoc[1]);
+                    hiRect.inset(Math.round(hiInset), Math.round(hiInset));
+                    canvas.drawRoundRect(hiRect.left, hiRect.top, hiRect.right, hiRect.bottom,
+                            hiRadius, hiRadius, hiPaint);
                 }
             }
         };

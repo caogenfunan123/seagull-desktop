@@ -140,7 +140,17 @@ public class WindowTestActivity extends BaseActivity {
     }
 
     private void refresh() {
-        if (report != null) report.setText(Caps.report(this));
+        // Caps.report 冷缓存时会真起一次 su（3s 超时兜底），排障页常被 adb 直启、
+        // 缓存可能是冷的 —— 挪后台线程，回来只贴文本。
+        if (report == null) return;
+        final WindowTestActivity self = this;
+        new Thread(() -> {
+            String raw;
+            try { raw = Caps.report(self); } catch (Throwable t) { raw = "自检失败: " + t; }
+            final String s = raw;
+            if (isFinishing() || isDestroyed()) return;
+            runOnUiThread(() -> { if (report != null) report.setText(s); });
+        }).start();
     }
 
     private void append(String s) {

@@ -358,25 +358,30 @@
 - [ ] 换肤/换壁纸来回切多次，`dumpsys` 看 DesktopView 实例不累积（sink 泄漏修复）；画中画 Surface 无重复（cancelPending 修复）
 - [ ] 检查更新→下载安装包：文件名形如 `seagull-1.1.apk`（tag_name 消毒），落盘 `files/updates/`，安装 intent 正常弹出
 
-### P2-16 批次 T 遗留：代理发现但未亲自复核的项（下批复盘逐项读码坐实）⚪ 未复核
-- [ ] GardenActivity：`dp(ballX)` 疑似双倍密度换算（dp 函数又乘 densityDpi）；菜园时钟不走字（无 ticker）
-- [ ] BallService：长按与单击两个 Runnable 都触发；tap 区域判定
-- [ ] RootPanelActivity：主线程 su×2（hasRoot + rootWho）ANR 风险；reload 同线程又 su×2
-- [ ] VirtualDisplayHost：create/release 未同步、displayId 非 volatile；launchViaRoot 在 attach 前抛 IllegalStateException
-- [ ] WindowTestActivity：refresh 主线程 su；vd.getDisplay() 未判空 NPE
-- [ ] Lrc：BOM 未 trim；`[mm:99]` 非法秒；重复时间戳
-- [ ] Pinyin：`Locale.getDefault()` 土耳其语 I 问题；输入无上限
-- [ ] Theme：accent 校验过松（`#`/`123` 能过，随后 parseColor 崩）
-- [ ] MediaListenerService：通知日志打印歌名/歌手正文（隐私）；playPause 快照竞态
-- [ ] Wallpaper：读路径流泄漏；主线程解码；purgeWalls 删当前壁纸；孤儿文件不清理
-- [ ] SettingsSection：定时器 HHMM 误解析（730=12:10 非 07:30）；默认值 -1 永不到点；delayMs int 溢出；换肤后 Skin.apply 时机
-- [ ] SelfTest/SelfTestMirror：自检会改设备亮度/音量（副作用应只读）；mirror 结果未校验
-- [ ] TaskEngine：触发条件从 name 每次重算（改任务名=改触发）
-- [ ] HomeActivity：自带的 unused import/prefs；island sink 与 DesktopView sink 双轨并存时的顺序
-- [ ] DesktopView：dispatchDraw/dragLayer 每帧分配；`f.keys.get(0)` 空文件夹 AIOOBE
-- [ ] RootMain：thread-per-connection 无上限（本家连接数固定，风险低，记录备查）
-- [ ] BootReceiver：MY_PACKAGE_REPLACED 分支绕过 autoHome 直接 pull（设计如此还是 bug，待判）
-- [ ] LauncherModel：loadApps 主线程全机枚举；WallpaperActivity 全文件系统 loadLabel
+### P2-16 批次 T 遗留：代理发现但未亲自复核的项 ⚪→✅ 批次 V 已清账（坐实 12 处修复 / 杀 14 项误报 / 2 项架构级转 P2-18，详见 DEVLOG 批次 V）
+- [x] GardenActivity：dp(ballX) 双倍换算坐实已修（ballX 是像素）；时钟不走字坐实已修（秒级 ticker）
+- [x] BallService：长按后松手 tap() 双触发坐实已修（longFired）；tap 区域判定杀（slop 逻辑成立）
+- [x] RootPanelActivity：envInfo 2×su + hasRoot 冷调压主线程坐实已修（全挪后台）；「reload su×2」不存在（杀）
+- [x] VirtualDisplayHost：create/release 跨线程竞态坐实已修（synchronized）；volatile/attach 前 ISE 杀（不可达）
+- [x] WindowTestActivity：refresh 主线程 su 坐实已修；getDisplay NPE 杀（catch Throwable 兜住）
+- [x] Lrc：BOM 坐实已修；超长 mm NFE 崩主线程坐实已修（复核中新发现）；[mm:99]/重复时间戳杀（宽容解析/设计内）
+- [x] Pinyin：土耳其 I 杀（已全程 Locale.ROOT）；输入上限杀（缓存 400 上限）
+- [x] Theme：accent 校验杀（两路径有 try/catch，无裸 parseColor）
+- [x] MediaListenerService：通知正文进 logcat 坐实已修（隐私）；playPause 竞态杀（两向 no-op）
+- [x] Wallpaper：流泄漏 + 孤儿文件坐实已修（try-with-resources / removeWall 连带删文件）；主线程解码坐实转 P2-18；purgeWalls 杀（函数不存在）
+- [x] SettingsSection：HHMM 730 误解析坐实已修（按 HHMM 口径）；delayMs int 溢出坐实已修（long + 7 天上限）；-1 永不到点杀（describe 可见可编辑）；Skin.apply 时机坐实已修（render 前补）
+- [x] SelfTest：亮度/音量副作用坐实已修（亮度还原 / 音量改只读）；mirror 校验杀（taskOnDisplay 在位）
+- [x] TaskEngine：name 重算杀（触发是持久化枚举字段）
+- [x] HomeActivity：死 prefs 已删；island sink 双轨杀（设计内多订阅）
+- [x] DesktopView：dispatchDraw 每帧分配坐实已修（预分配）；空文件夹 AIOOBE 杀（双层修剪）
+- [x] RootMain：thread-per-connection 维持记录备查（连接数固定 + 空闲看门狗）
+- [x] BootReceiver：更新路径无视开关 + 开机任务被 autoHome 连带吞坐实已修（开关只管拉界面，任务只在真 BOOT）
+- [x] LauncherModel：loadApps 主线程坐实转 P2-18；WallpaperActivity loadLabel 杀（类不存在）
+
+### P2-18 批次 V 坐实但架构级的项（下批专项）⚪ 未动
+- [ ] loadApps() 异步化：6 个页面 onCreate 主线程全机枚举（Home/Search/AppList/SettingsHub/SettingsSection/VirtualDisplay），bloaty 设备 queryIntentActivities 100ms+；需给各页补占位渲染 + 回调刷新
+- [ ] 壁纸后台解码管线：loadForScreen 在 Garden/Desktop/Home onCreate 同步 decode（已降采样但仍是主线程解码）；连带三处渲染时机改造
+- [ ] 附带口径：上方两项做完后，RootPanel/WindowTest/VirtualDisplay 的后台线程模式（isFinishing 检查 + 回贴 UI）可作为统一范式推广
 
 ### P2-17 批次 U CarPlay 换皮验收（skin-only：预设 + 圆角 + 字号）🟡 代码已写，typecheck 过 + 123 项自检过，真机待验
 - [ ] 新装/恢复出厂默认「苹果互联」；主题页可切到其他预设并切回，色值齐全

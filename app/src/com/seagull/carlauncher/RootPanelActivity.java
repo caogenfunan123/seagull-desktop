@@ -29,7 +29,17 @@ public class RootPanelActivity extends BaseActivity {
 
     @Override protected void onResume() {
         super.onResume();
-        env.setText(SysOps.envInfo(this));
+        // envInfo 里有 2 次真实 su 落地（settings get + dumpsys focus，各带 3s 超时），
+        // 主线程跑会卡帧；挪后台线程，回来只贴文本。
+        env.setText("检测中…");
+        final RootPanelActivity self = this;
+        new Thread(() -> {
+            String s;
+            try { s = SysOps.envInfo(self); } catch (Throwable t) { s = "环境检测失败: " + t; }
+            final String out = s;
+            if (isFinishing() || isDestroyed()) return;
+            runOnUiThread(() -> env.setText(out));
+        }).start();
     }
 
     private int dp(float v) {
@@ -67,15 +77,22 @@ public class RootPanelActivity extends BaseActivity {
         env.setPadding(dp(12), dp(10), dp(12), dp(10));
         col.addView(env);
 
-        final boolean root = Caps.hasRoot();
-        if (!root) {
-            TextView warn = new TextView(this);
-            warn.setText("⚠ 未检测到 root 通道：以下操作不会真的执行。");
-            warn.setTextColor(Skin.c(R.color.bad));
-            warn.setTextSize(13);
-            warn.setPadding(0, dp(10), 0, 0);
-            col.addView(warn);
-        }
+        // root 探测可能真起一次 su（进程内首调才落地，之后走缓存）；
+        // 不在主线程赌这 3 秒，先画 UI，后台探完再补警示条。
+        final TextView warn = new TextView(this);
+        warn.setText("⚠ 未检测到 root 通道：以下操作不会真的执行。");
+        warn.setTextColor(Skin.c(R.color.bad));
+        warn.setTextSize(13);
+        warn.setPadding(0, dp(10), 0, 0);
+        warn.setVisibility(View.GONE);
+        col.addView(warn);
+        new Thread(() -> {
+            boolean has = false;
+            try { has = Caps.hasRoot(); } catch (Throwable ignore) {}
+            final boolean root = has;
+            if (isFinishing() || isDestroyed()) return;
+            runOnUiThread(() -> warn.setVisibility(root ? View.GONE : View.VISIBLE));
+        }).start();
 
         /* 亮度 */
         col.addView(section("屏幕亮度（0-255）"));

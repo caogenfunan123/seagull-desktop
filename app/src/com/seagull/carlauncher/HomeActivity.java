@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.app.PictureInPictureParams;
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
@@ -46,7 +45,6 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
     public static final String PREFS = "seagull";
 
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private SharedPreferences prefs;
 
     private DesktopView desktop;
     private PipBoard pip;
@@ -61,7 +59,6 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         lastSkin = skinSignature();
         selfReport();
         setContentView(buildUi());

@@ -52,22 +52,27 @@ public class GardenActivity extends BaseActivity {
             default:
                 col.setGravity(Gravity.CENTER);
                 col.addView(clock(56));
-                col.addView(sub(SysOps.dateCn(), 16));
+                dateView = sub(SysOps.dateCn(), 16);
+                col.addView(dateView);
                 col.addView(lyricLine(15));
                 break;
         }
 
         leaf = leafView();
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                dp(model.ballSize), dp(model.ballSize));
+        int size = dp(model.ballSize);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(size, size);
         if (model.ballX < 0) {
             lp.gravity = Gravity.BOTTOM | Gravity.START;
             lp.leftMargin = dp(24);
             lp.bottomMargin = dp(32);
         } else {
+            // ballX/ballY 由 BallService.snap 存的是像素（lp.x/lp.y），这里直接用；
+            // 旧实现再过一遍 dp()，440dpi 机器上叶子会飞到 2.75 倍远处。
+            int w = getResources().getDisplayMetrics().widthPixels;
+            int h = getResources().getDisplayMetrics().heightPixels;
             lp.gravity = Gravity.TOP | Gravity.START;
-            lp.leftMargin = dp(model.ballX);
-            lp.topMargin = dp(model.ballY);
+            lp.leftMargin = Math.max(0, Math.min(model.ballX, Math.max(0, w - size)));
+            lp.topMargin = Math.max(0, Math.min(model.ballY, Math.max(0, h - size)));
         }
         root.addView(leaf, lp);
         return root;
@@ -101,6 +106,7 @@ public class GardenActivity extends BaseActivity {
         t.setTextSize(sp);
         t.setTextColor(Skin.c(R.color.text));
         t.setShadowLayer(dp(6), 0, 0, 0xAA000000);   // 4.11 字底：看不清时压一层影
+        clockViews.add(t);
         return t;
     }
 
@@ -125,6 +131,18 @@ public class GardenActivity extends BaseActivity {
     }
 
     private TextView lyricView;
+
+    /* 时钟走字：build 时只画一帧，之后每秒对齐刷新（旧实现时钟不走字）。 */
+    private final java.util.List<TextView> clockViews = new java.util.ArrayList<>();
+    private TextView dateView;
+    private final android.os.Handler ticker = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable tickRun = new Runnable() {
+        @Override public void run() {
+            for (TextView t : clockViews) t.setText(SysOps.clockHHmm());
+            if (dateView != null) dateView.setText(SysOps.dateCn());
+            ticker.postDelayed(this, 1000);
+        }
+    };
 
     private TextView leafView() {
         TextView t = new TextView(this);
@@ -163,12 +181,15 @@ public class GardenActivity extends BaseActivity {
 
     @Override protected void onResume() {
         super.onResume();
+        ticker.removeCallbacks(tickRun);
+        ticker.post(tickRun);
         Lyrics.start(this);
         Lyrics.addSink(gardenSink);
         paintLyric(Lyrics.window(this, model, model.lyricLines));
     }
 
     @Override protected void onPause() {
+        ticker.removeCallbacks(tickRun);
         Lyrics.removeSink(gardenSink);
         super.onPause();
     }

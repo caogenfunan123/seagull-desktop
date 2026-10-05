@@ -35,6 +35,7 @@ public class BallService extends Service {
     private int size;
     private float downX, downY;
     private boolean moved;
+    private boolean longFired;
 
     @Override public void onCreate() {
         super.onCreate();
@@ -107,6 +108,7 @@ public class BallService extends Service {
                     case MotionEvent.ACTION_DOWN:
                         downX = e.getRawX(); downY = e.getRawY();
                         moved = false;
+                        longFired = false;
                         view.postDelayed(longPressRun, longPress);
                         return true;
                     case MotionEvent.ACTION_MOVE: {
@@ -122,8 +124,9 @@ public class BallService extends Service {
                     case MotionEvent.ACTION_UP:
                     case MotionEvent.ACTION_CANCEL:
                         view.removeCallbacks(longPressRun);
-                        if (!moved) tap();
-                        else snap(lp);
+                        // 长按已弹菜园时松手不能再来一次 tap()，否则桌面又盖上来
+                        if (!moved && !longFired) tap();
+                        else if (moved) snap(lp);
                         return true;
                 }
                 return false;
@@ -134,6 +137,7 @@ public class BallService extends Service {
 
     private final Runnable longPressRun = new Runnable() {
         @Override public void run() {
+            longFired = true;
             // 长按服务上下文起 Activity 必须带 NEW_TASK，否则 AndroidRuntimeException
             // （Service 不是 Activity context）。tap() 那条路径带过，这条漏了。
             startActivity(new Intent(BallService.this, GardenActivity.class)

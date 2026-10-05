@@ -27,6 +27,10 @@ public final class Lrc {
     }
 
     public static Lrc parse(String lrc) {
+        if (lrc == null) return EMPTY;
+        // Windows 记事本系的 BOM（U+FEFF）trim() 剥不掉（它只剥 ≤ U+0020），
+        // 留着会让首行时间戳对不上行首，整行被丢（批次 V 坐实）。
+        if (lrc.startsWith("\uFEFF")) lrc = lrc.substring(1);
         List<String> out = new ArrayList<>();
         List<Long> ts = new ArrayList<>();
         for (String raw : lrc.split("\\r?\\n")) {
@@ -38,9 +42,16 @@ public final class Lrc {
             int end = 0;
             Matcher m = TIME.matcher(line);
             while (m.find() && m.start() == end) {      // 只认行首连续的时间戳
-                long ms = Long.parseLong(m.group(1)) * 60000
-                        + Long.parseLong(m.group(2)) * 1000
-                        + frac(m.group(3));
+                long ms;
+                try {
+                    // 网上下的 lrc 什么都有，超长 [mm:...] 会把 parseLong 顶成 NFE——
+                    // 本方法跑在主线程（Lyrics 的 MAIN.post 里），必须就地兜住
+                    ms = Long.parseLong(m.group(1)) * 60000L
+                            + Long.parseLong(m.group(2)) * 1000L
+                            + frac(m.group(3));
+                } catch (NumberFormatException nfe) {
+                    break;
+                }
                 cur.add(ms);
                 end = m.end();
             }

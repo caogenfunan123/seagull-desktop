@@ -20,7 +20,12 @@ public final class SelfTest {
                 sb.append("brightness(read)=").append(SysOps.getBrightness()).append('\n');
                 sb.append("setBrightness=").append(SysOps.setBrightness(128)).append('\n');
                 sb.append("brightness(after)=").append(SysOps.getBrightness()).append('\n');
-                sb.append("setVolume=").append(SysOps.setVolume(7)).append('\n');
+                // 写通道验证完把亮度还原；旧实现把用户亮度钉死在 128（批次 V 坐实）
+                int orig = SysOps.getBrightness();
+                if (orig <= 0) orig = 128;
+                sb.append("brightness(restore)=").append(SysOps.setBrightness(orig)).append('\n');
+                // 音量没有可靠的读回 API，改只读探针取证（旧实现直接把音量打到 7）
+                sb.append("volume(get)=").append(Caps.exec("media volume --stream 3 --get")).append('\n');
                 sb.append("overlay=").append(Caps.canOverlay(ctx)).append('\n');
                 sb.append("level=").append(Caps.levelName(Caps.level(ctx))).append('\n');
                 sb.append("envInfo:\n").append(SysOps.envInfo(ctx)).append('\n');

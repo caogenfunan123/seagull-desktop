@@ -63,6 +63,9 @@ public class SettingsSectionActivity extends BaseActivity {
     }
 
     private void render() {
+        // 主题/强调色在这页改，改完立即重取色板再重建视图；
+        // 旧实现 Skin 一直是 onCreate 时的旧色，用户点了主题看不到变化（批次 V 坐实）
+        Skin.apply(model);
         setContentView(build());
     }
 
@@ -798,7 +801,13 @@ public class SettingsSectionActivity extends BaseActivity {
         inputDialog("每天几点几分（例：730 表示 07:30）", "-1", s -> {
             try {
                 int v = Integer.parseInt(s.trim());
-                t.atMin = v < 0 || v > 1440 ? -1 : Math.min(v, 1439);
+                if (v < 0) { t.atMin = -1; }
+                else {
+                    // 按提示词口径解析成 HHMM：730 → 07:30
+                    // （旧实现当成"第 730 分钟"= 12:10，和提示词自相矛盾）
+                    int h = v / 100, mnt = v % 100;
+                    t.atMin = (h <= 23 && mnt <= 59) ? h * 60 + mnt : -1;
+                }
             } catch (Throwable e) {
                 t.atMin = -1;
             }
@@ -825,7 +834,10 @@ public class SettingsSectionActivity extends BaseActivity {
     private void askDelayThenAdd(final LauncherModel.Task t) {
         inputDialog("延迟秒数（0 = 不延迟）", "0", s -> {
             try {
-                t.delayMs = Math.max(0, Integer.parseInt(s.trim())) * 1000;
+                long sec = Long.parseLong(s.trim());
+                if (sec < 0) sec = 0;
+                if (sec > 86400L * 7) sec = 86400L * 7;   // 上限 7 天：旧实现秒数>约24.8天时
+                t.delayMs = (int) (sec * 1000);           // 乘 1000 会把 int 顶成负数，任务反而立即触发
             } catch (Throwable e) { t.delayMs = 0; }
             if (model.addTask(t)) render();
         });
