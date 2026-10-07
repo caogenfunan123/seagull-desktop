@@ -41,13 +41,16 @@
 
         <!--
             LSPosed 模块声明（批次 W，见 XposedEntry）：让 LSPosed 管理器把本 APK
-            列为模块。经典入口（assets/xposed_init → XposedEntry），minversion 82
-            兼容所有 LSPosed 版本；xposedscope 预填作用域，用户在管理器里可再增删。
+            列为模块。经典入口（assets/xposed_init → XposedEntry）。
+            xposedminversion=102 是 LSPosed/LibreXposed 的 API 版本号（用户用的就是 102，
+            与参考实现 CarWithX com.leting 一致），不是 Android SDK，也跟编译期签名桩
+            xposed-api-82.jar 无关——那个 artifact 上游最高只出到 82，只是拿来编过。
+            xposedscope 预填作用域，用户在管理器里可再增删。
         -->
         <meta-data android:name="xposedmodule" android:value="true" />
         <meta-data android:name="xposeddescription"
             android:value="海鸥桌面：SystemUI PiP 尺寸缩放 + 目标应用强制横屏 + 自动进画中画" />
-        <meta-data android:name="xposedminversion" android:value="82" />
+        <meta-data android:name="xposedminversion" android:value="102" />
         <meta-data android:name="xposedscope" android:resource="@array/xposed_scope" />
 
         <activity

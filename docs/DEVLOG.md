@@ -1121,8 +1121,9 @@ SelfTestMirror 结果未校验（taskOnDisplay 三处核对在位）、TaskEngin
 2. XposedBridge 签名桩 `app/libs/xposed-api-82-stub-src/`（7 文件，签名与上游
    api-82 一致）→ `app/libs/xposed-api-82.jar`（5.5KB）只进编译期 classpath
    （javac + d8 --lib），运行时由 LSPosed 提供，不进 dex。
-3. manifest：`xposedmodule`/`xposeddescription`/`xposedminversion=82`（兼容所有
-   LSPosed 版本含 API 102）/`xposedscope=@array/xposed_scope`。
+3. manifest：`xposedmodule`/`xposeddescription`/`xposedminversion=102`（这是 LSPosed
+   API 版本号，用户用的就是 102，与参考实现 CarWithX `com.leting` 一致；此前误写 82
+   ——那是编译期签名桩 artifact 的版本，不是 API 版本）/`xposedscope=@array/xposed_scope`。
 4. `res/values/arrays.xml`：默认作用域与 TARGETS 一致；`assets/xposed_init`：
    入口类 FQCN。
 5. `build.sh`：aapt2 link 加 `-A assets`；javac/d8 挂签名桩；缺桩/缺 assets
