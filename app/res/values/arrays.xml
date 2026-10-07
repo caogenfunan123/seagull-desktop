@@ -6,11 +6,14 @@
 -->
 <resources>
     <string-array name="xposed_scope">
+        <!-- SystemUI 是 AmapPip 尺寸缩放 hook 的宿主进程，必须勾选 -->
         <item>com.android.systemui</item>
         <item>com.autonavi.minimap</item>
+        <item>com.autonavi.amapauto</item>
         <item>com.baidu.BaiduMap</item>
         <item>com.tencent.map</item>
         <item>com.netease.cloudmusic</item>
+        <item>com.netease.cloudmusic.iot</item>
         <item>com.tencent.qqmusic</item>
     </string-array>
 </resources>

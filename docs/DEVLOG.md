@@ -12,6 +12,71 @@
 
 ---
 
+## 批次 X — LSPosed 模块不生效的复盘：模块根本没被加载 + 两条死 hook
+
+**目标**：用户报「还是不行」（高德画中画仍竖版黑边、网易云点击跳主屏）。
+全面复盘模块侧代码，逐条对齐参考实现（`xphook` = CarWithX `com.leting` 的
+AmapPipHook + NetEasePipAdapter；`WFreeHook` = 车联助手桌面的窗口语义模块），
+找出「参考能生效、我们为什么不能」。
+
+### ① 模块压根没被加载（批次 W 自己写错了）
+
+`AndroidManifest.xml` 里 `xposedminversion=102`。这个 meta-data 的含义是
+**「本模块要求框架提供的 Xposed API 最低版本」**，LSPosed 加载前会拿它跟
+`XposedBridge.getXposedVersion()` 比，**大了就直接跳过加载** —— 模块在管理器里
+看得见、作用域也勾了，但任何进程都进不去，`SeagullLsp` 一条日志都没有。
+
+- 唯一可信证据：参考实现 `reference/carplay-re/sources/netease-pip-adapter/app/src/main/AndroidManifest.xml`
+  是 `93`（这是实测能用的那份）。LSPosed 的 legacy de.robv API 版本号就是 93。
+- 批次 W 里「API 102」的来源是 `xphook` 的日志字符串
+  `"CarWithX LSPosed API102 loaded"` —— 那是它自己打的广告，不是清单声明值，读错了。
+- 改成 `93`（≤ 任何 102 框架，也 = 框架自身的 93，两个方向都满足）。
+
+### ② 网易云那两条 `Context.startActivity` 是死 hook
+
+`XposedHelpers.findAndHookMethod(Context.class, "startActivity", ...)` 挂的是
+**抽象基类 Context 上声明的那份实现**。`startActivity` 在 `ContextWrapper` /
+`ContextImpl` / `Activity` 里全部被 override，虚拟分派永远走不到 Context 那份，
+挂上去一次也不会触发。参考实现自己也有这个毛病，照抄就把病一起抄进来了。
+
+- 而网易云 IoT 的播放页正是 **Service/Application 侧**拉起的 —— 恰好是这对死 hook
+  本该负责的那条路，所以「点一下照样跳主屏」。
+- 改成挂 `android.app.ContextImpl`（所有非 Activity Context 的最终实现，
+  `ContextWrapper.mBase` 就是它），活动 Activity 侧仍由另外 4 条覆盖。
+- 顺带把 6 条 hook 各自包 try/catch（对齐参考的写法）：某台 ROM 上少一个签名，
+  不该把后面几条一起吞掉。
+
+### ③ H2 漏了批次 W 的 onCreate 强拉（被重写时丢了）
+
+批次 W 原本有 `hook Activity.onCreate(after) → setRequestedOrientation(横屏)`，
+重写成 WFreeHook 版时丢了。**只 hook set/get 改不动 WM 侧的 ActivityRecord**：
+高德首屏 Activity 的 `screenOrientation=1(PORTRAIT)` 写在 manifest 里，WM 建窗时
+读的是 manifest，不是应用读回的那个值 —— 首帧必然竖版。补回来（H2b），
+`onCreate` 后再显式请求一次目标方向；这次调用会再进 setRequestedOrientation 的
+hook，参数已是目标值，原样放行，无递归。
+
+### 复盘
+
+- 做错：把「日志字符串」当「清单声明值」；把「参考实现有这个 hook」当成
+  「这个 hook 有效」。两个都是**没验证据就当事实**，代价是整批功能静默失效 ——
+  而且失效方式最恶劣：不崩、不报错、日志里啥也没有。
+- 判据固化：任何「模块没生效」的排查，第一步是确认 `SeagullLsp` 有没有日志；
+  没有就只查加载链（xposedminversion → 模块启用 → 作用域 → 产物是不是最新），
+  不要先去怀疑 hook 逻辑。
+
+### 验证
+
+- `XposedEntry.java` 括号/结构平衡 + 逐条对齐参考；javac 类型检查走 CI（本地无 javac）。
+- 真机验收：`adb logcat -s SeagullLsp` 应出现
+  `已挂载 com.android.systemui → AmapPip 尺寸缩放 0.6`、`C1..C6 OK`、`H2 ... OK`。
+
+### 遗留
+
+- `Context.startActivity` 死 hook 的结论同样适用于 `ContextWrapper` 之外的写法，
+  本批只修了网易云这一段；其余段没用到 `Context.startActivity`。
+- 参考实现 `xphook` 的 ② 号缺陷（死 hook）说明「照抄参考」本身不是充分条件，
+  后面再移植参考代码时，先判一遍「这个 hook 到底会不会被调用」。
+
 ## 批次 S — 全库复盘：复读画中画链路（~2700 行）+ 全库高危模式扫描，修 4 处确凿问题
 
 **目标**：用户要求复盘全部代码找必修问题。精读批次 R 触碰过的完整链路

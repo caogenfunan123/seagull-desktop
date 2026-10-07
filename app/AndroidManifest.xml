@@ -42,15 +42,22 @@
         <!--
             LSPosed 模块声明（批次 W，见 XposedEntry）：让 LSPosed 管理器把本 APK
             列为模块。经典入口（assets/xposed_init → XposedEntry）。
-            xposedminversion=102 是 LSPosed/LibreXposed 的 API 版本号（用户用的就是 102，
-            与参考实现 CarWithX com.leting 一致），不是 Android SDK，也跟编译期签名桩
-            xposed-api-82.jar 无关——那个 artifact 上游最高只出到 82，只是拿来编过。
+
+            xposedminversion 是「本模块要求框架提供的 Xposed API 最低版本」，
+            必须 <= 框架的 XposedBridge.getXposedVersion()，否则 LSPosed 直接跳过加载
+            （模块在管理器里可见、作用域也在，但任何进程都进不去 —— 静默失效）。
+            取 93：与参考实现 com.leting（netease-pip-adapter 清单）一致，
+            也低于 LSPosed 主流 build 的 API 版本，任何框架上都满足。
+            之前写 102 是误读：xphook 里那句 "CarWithX LSPosed API102 loaded"
+            只是它自己的日志字符串，不是清单里声明的最低版本。
+            真机上还出现过「源码已改、产物没重建」导致 APK 里仍是 82 的情况（批次 X 复盘）。
+
             xposedscope 预填作用域，用户在管理器里可再增删。
         -->
         <meta-data android:name="xposedmodule" android:value="true" />
         <meta-data android:name="xposeddescription"
-            android:value="海鸥桌面：SystemUI PiP 尺寸缩放 + 目标应用强制横屏 + 自动进画中画" />
-        <meta-data android:name="xposedminversion" android:value="102" />
+            android:value="海鸥桌面：高德 PiP 尺寸缩放(60%) + 目标应用 H1/H2/H3 窗口语义 + 网易云跨屏 displayId 注入" />
+        <meta-data android:name="xposedminversion" android:value="93" />
         <meta-data android:name="xposedscope" android:resource="@array/xposed_scope" />
 
         <activity
