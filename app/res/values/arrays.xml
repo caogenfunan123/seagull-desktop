@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    LSPosed 模块默认作用域（批次 W）。必须与 XposedEntry.TARGETS 保持一致：
+    LSPosed 管理器按这份名单预勾选，hook 侧按 TARGETS 放行。
+-->
+<resources>
+    <string-array name="xposed_scope">
+        <item>com.autonavi.minimap</item>
+        <item>com.baidu.BaiduMap</item>
+        <item>com.tencent.map</item>
+        <item>com.netease.cloudmusic</item>
+        <item>com.tencent.qqmusic</item>
+    </string-array>
+</resources>

@@ -32,6 +32,12 @@ if [ -z "$KS_PASS" ] && [ -f "$KS_DIR/seagull-release.properties" ]; then
 fi
 [ -n "$KS_PASS" ] || KS_PASS=seagull-release
 
+# LSPosed 模块（批次 W）：XposedBridge 签名桩只进编译期，运行时由 LSPosed 提供，
+# 见 app/libs/xposed-api-82-stub-src/。缺了它 XposedEntry 编不过。
+XSTUB="$P/libs/xposed-api-82.jar"
+[ -f "$XSTUB" ] || { echo "缺 $XSTUB（Xposed 签名桩，用 app/libs/xposed-api-82-stub-src 重新打）"; exit 1; }
+[ -d "$P/assets" ] || { echo "缺 $P/assets（xposed_init 所在目录）"; exit 1; }
+
 OUT="$P/out"
 # 每次构建用独立子目录，避免清空历史产物（构建机不删文件）
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -47,6 +53,7 @@ aapt2 compile --dir "$P/res" -o "$RESC/res.zip"
 echo "== 2/7 链接资源 + 生成 R.java =="
 aapt2 link -o "$OUT/base-$STAMP.apk" \
   -I "$ANDROID_JAR" \
+  -A "$P/assets" \
   --manifest "$P/AndroidManifest.xml" \
   -R "$RESC/res.zip" \
   --java "$GEN" \
@@ -58,7 +65,7 @@ aapt2 link -o "$OUT/base-$STAMP.apk" \
 echo "== 3/7 javac =="
 find "$P/src" "$GEN" -name '*.java' > "$OUT/sources-$STAMP.txt"
 "$JAVA_HOME/bin/javac" -encoding UTF-8 --release 11 -nowarn -Xlint:-options \
-  -classpath "$ANDROID_JAR" \
+  -classpath "$ANDROID_JAR:$XSTUB" \
   -d "$CLASSES" @"$OUT/sources-$STAMP.txt" 2>&1 | grep -v 'bootstrap class path\|deprecat\|obsolete' > "$OUT/javac-$STAMP.log" || true
 if grep -q 'error:' "$OUT/javac-$STAMP.log"; then echo "javac 失败："; cat "$OUT/javac-$STAMP.log"; exit 1; fi
 grep -v '^Picked up' "$OUT/javac-$STAMP.log" | grep -v '^$' | head -5 || true
@@ -66,10 +73,10 @@ grep -v '^Picked up' "$OUT/javac-$STAMP.log" | grep -v '^$' | head -5 || true
 echo "== 4/7 d8 (dex) =="
 if [ -f "$P/libs/r8.jar" ]; then
   "$JAVA_HOME/bin/java" -cp "$P/libs/r8.jar" com.android.tools.r8.D8 \
-    --min-api $MIN_API --lib "$ANDROID_JAR" --output "$DEX" \
+    --min-api $MIN_API --lib "$ANDROID_JAR" --lib "$XSTUB" --output "$DEX" \
     $(find "$CLASSES" -name '*.class')
 else
-  d8 --min-api $MIN_API --lib "$ANDROID_JAR" --output "$DEX" \
+  d8 --min-api $MIN_API --lib "$ANDROID_JAR" --lib "$XSTUB" --output "$DEX" \
     $(find "$CLASSES" -name '*.class')
 fi
 

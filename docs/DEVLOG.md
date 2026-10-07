@@ -1085,3 +1085,54 @@ SelfTestMirror 结果未校验（taskOnDisplay 三处核对在位）、TaskEngin
 - P2-16 的 17 项里 14 项是误报——代理批量扫出的"嫌疑清单"价值在于圈定阅读范围，
   结论仍必须自己读码下。本批两处最有价值的收获（主线程崩 Lrc NFE、BootReceiver
   开关吞任务）都是复核过程中顺藤摸出的新问题，清单本身都没点名。
+
+---
+
+## 批次 W — 内置 LSPosed 模块：画中画应用强制横屏（真机截图坐实竖屏黑边后立项）
+
+**目标**：用户真机截图显示画中画里高德/音乐 App 全是竖版 UI + 两侧大黑边，
+并且拍板做 LSP 模块 hook（LSPosed API 102）。此前批次 R 的 `NEVER_FIX_ORIENTATION`
+只能解锁 manifest 声明，挡不住应用运行时自己调 `setRequestedOrientation(PORTRAIT)`
+——这条路线对高德无效，之前把"解锁 manifest"当成成立的能力是复盘误判，本批修正。
+
+**注入点侦查（下载官方包静态分析）**
+
+- 包：`com.autonavi.minimap` v17.00.0.2005（targetSdk 35，8 个 dex ~93MB），
+  入口 activity-alias `com.autonavi.map.activity.SplashActivity`。
+- manifest：几十个 Activity 声明 `screenOrientation=1`（PORTRAIT）——竖屏第一帧
+  就是这么来的；少量 `=2`（user）/`=3`（behind）。
+- dex 调用方扫描（自研 `/tmp/opencode/amap/dexscan.py`：解析 dex 头 +
+  method_ids 名字匹配 + class_defs code 区间 + invoke 字节码正则定位调用方）：
+  **106 个类**引用 `Activity.setRequestedOrientation`——mPaaS/H5 容器
+  （H5ScreenPlugin/NXScreenOrientationProxyImpl）、支付宝 SDK、amap bundle
+  （SpeakerModeManager/ModuleHeadunit/NaviMapView 等）全都在运行时反复锁方向。
+- 结论：注入点 = `android.app.Activity` 基类，进程级 hook 全量覆盖 manifest 锁 +
+  106 个运行时调用点，一个点管全部。
+
+**改了什么**
+
+1. `XposedEntry.java`（新增，自包含——跑在目标进程，LSPosed 自己的 classloader
+   加载本 APK，主项目其他类在目标进程不存在，禁止引用）：
+   - hook `Activity.setRequestedOrientation`：args[0] 非 SENSOR_LANDSCAPE(6) 一律改写；
+   - hook `Activity.onCreate`（after）：创建完强拉一次横屏，第一帧就是横的；
+     内部这次调用会再进 hook 1，参数已是目标值原样放行，无递归；
+   - TARGETS 白名单（高德/百度/腾讯地图/网易云/QQ音乐）双重过滤，勾了名单外的
+     应用也不生效。
+2. XposedBridge 签名桩 `app/libs/xposed-api-82-stub-src/`（7 文件，签名与上游
+   api-82 一致）→ `app/libs/xposed-api-82.jar`（5.5KB）只进编译期 classpath
+   （javac + d8 --lib），运行时由 LSPosed 提供，不进 dex。
+3. manifest：`xposedmodule`/`xposeddescription`/`xposedminversion=82`（兼容所有
+   LSPosed 版本含 API 102）/`xposedscope=@array/xposed_scope`。
+4. `res/values/arrays.xml`：默认作用域与 TARGETS 一致；`assets/xposed_init`：
+   入口类 FQCN。
+5. `build.sh`：aapt2 link 加 `-A assets`；javac/d8 挂签名桩；缺桩/缺 assets
+   前置 fail（防静默打出无模块的包）。
+
+**使用步骤**：装新包 → LSPosed 管理器启用「海鸥桌面」（作用域按 xposed_scope
+预填，可增删）→ 强杀目标应用进程（高德）让其重启加载 hook → 画中画部署高德。
+
+**验证**：javac 类型检查过（含新 jar classpath）；自检 123/123；dex 扫描法
+在 8 个 dex 上跑通（106 命中即证）。真机验收列 P2-19。
+
+**遗留**：目标 App 的弹窗/透明页也会被拉横屏（预期内，车机场景可接受）；
+应用内部横竖屏状态机若与 WM 冲突需真机看 logcat（SeagullLsp tag）。
