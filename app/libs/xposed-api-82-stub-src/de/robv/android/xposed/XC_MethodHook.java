@@ -24,6 +24,9 @@ public abstract class XC_MethodHook extends XCallback {
         public Object result;
         public Throwable throwable;
         public boolean returnEarly;
+
+        public Object getResult() { return result; }
+        public void setResult(Object result) { this.result = result; }
     }
 
     public class Unhook {

@@ -487,8 +487,11 @@ public class HomeActivity extends BaseActivity implements DesktopView.Host {
 
     @Override public void onUserLeaveHint() {
         super.onUserLeaveHint();
-        // 旧实现读 prefs 里一个从未写入的 "autoPip"（永远 false），死代码。
-        // 画中画切换走 pipMode + PipBoard，不借系统画中画。
+        // 用户按 Home 离开桌面时自动进系统画中画。
+        // 这与 XposedEntry 里目标应用的 onUserLeaveHint hook 配合：
+        // 目标应用进 PiP（SystemUI hook 缩放到 60%），
+        // 桌面自身也可进 PiP（pipBox 显示精简视图）。
+        enterPip(null);
     }
 
     /* ------------------------- 兼容静态 API ------------------------- */

@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    LSPosed 模块默认作用域（批次 W）。必须与 XposedEntry.TARGETS 保持一致：
-    LSPosed 管理器按这份名单预勾选，hook 侧按 TARGETS 放行。
+    LSPosed 模块默认作用域。必须与 XposedEntry 的目标列表保持一致：
+    LSPosed 管理器按这份名单预勾选，hook 侧按名单放行。
+    SystemUI 是 PiP 尺寸缩放 hook 的宿主进程，必须勾选。
 -->
 <resources>
     <string-array name="xposed_scope">
+        <item>com.android.systemui</item>
         <item>com.autonavi.minimap</item>
         <item>com.baidu.BaiduMap</item>
         <item>com.tencent.map</item>

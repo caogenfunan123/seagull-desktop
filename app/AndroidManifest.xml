@@ -46,7 +46,7 @@
         -->
         <meta-data android:name="xposedmodule" android:value="true" />
         <meta-data android:name="xposeddescription"
-            android:value="海鸥桌面：地图/音乐应用画中画强制横屏" />
+            android:value="海鸥桌面：SystemUI PiP 尺寸缩放 + 目标应用强制横屏 + 自动进画中画" />
         <meta-data android:name="xposedminversion" android:value="82" />
         <meta-data android:name="xposedscope" android:resource="@array/xposed_scope" />
 
