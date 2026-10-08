@@ -327,7 +327,11 @@ public final class PipBoard extends LinearLayout {
                 // 没 App 可误触：焦点态下点一下直接选应用（可发现性优先）
                 if (a == MotionEvent.ACTION_UP && !longFired[w]) openPick(w);
             }
-            if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) armed[w] = false;
+            if (a == MotionEvent.ACTION_UP || a == MotionEvent.ACTION_CANCEL) {
+                boolean tapped = armed[w] && a == MotionEvent.ACTION_UP && !longFired[w];
+                armed[w] = false;
+                if (tapped) healSlotSoon(w);
+            }
             return true;
         });
 
@@ -674,6 +678,34 @@ public final class PipBoard extends LinearLayout {
                 if (out != null && !out.isEmpty()) Log.i(TAG, "自愈 槽 " + slotNo + ": " + out);
             }, "pip-heal" + i).start();
         }
+    }
+
+    /**
+     * 点一下之后的兜底自愈（批次 Z）：网易云这类 singleTask 应用在虚拟屏里跳页时，
+     * 新 Activity 常被系统按「默认屏」拉起，整块任务被拉回主屏 —— 画布黑掉、主屏
+     * 反被它全屏盖住，用户描述就是「点一下跳主屏」。
+     *
+     * 为什么要有这条：模块的 setLaunchDisplayId 注入只在模块真被注进目标进程时才生效
+     * （框架/作用域任一环没到位就静默失效）；这条走 root 的 am task move-task，不依赖
+     * 任何框架，是模块路线的兜底。补两次延时（600ms / 1600ms）：跳页的开窗有几帧延迟，
+     * 一次可能扑空。
+     */
+    private void healSlotSoon(final int which) {
+        ui.postDelayed(() -> healSlotNow(which), 600);
+        ui.postDelayed(() -> healSlotNow(which), 1600);
+    }
+
+    private void healSlotNow(int which) {
+        MirrorSlot s = slotOf(which);
+        if (s == null || s.displayId() <= 0 || !s.ready()) return;
+        final String pkg = pkgOf(which);
+        if (pkg == null || pkg.isEmpty()) return;
+        final int d = s.displayId();
+        final int slotNo = which;
+        new Thread(() -> {
+            String out = RootOps.ensureOnDisplay(act, pkg, d);
+            if (out != null && !out.isEmpty()) Log.i(TAG, "点后自愈 槽 " + slotNo + ": " + out);
+        }, "pip-tap-heal" + which).start();
     }
 
     private boolean notEmpty(String s) { return s != null && !s.isEmpty(); }

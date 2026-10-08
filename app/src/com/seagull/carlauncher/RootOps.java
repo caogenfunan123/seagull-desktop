@@ -103,15 +103,19 @@ public final class RootOps {
         String killOut = Caps.exec("am force-stop " + pkg);
         Log.i(TAG, "部署前 force-stop " + pkg + " -> "
                 + (killOut == null ? "无回显" : killOut.trim()));
+        // 【批次 Z】兼容位必须在「起进程之前」写。am compat enable 只对之后新起的进程生效；
+        // 旧顺序是「先起、起成功后才 relaxCompat」，于是当前这次部署根本不读新设置 ——
+        // 高德照旧按 manifest 的 PORTRAIT 建窗，塞进横屏画布就是竖版 + 左右黑边，
+        // 要等下一次部署才吃到配置（用户看到的"改了没用"正是这一条）。
+        // 移到 force-stop 之后、launch 之前，本次即生效。
+        relaxCompat(pkg);
         PrivClient.init(ctx);
         if (PrivClient.launch(displayId, comp, LAUNCH_FLAGS_INT)) {
             Log.i(TAG, "launchOnDisplay[" + pkg + "] 走守护进程成功 -> display " + displayId);
-            relaxCompat(pkg);
             return true;
         }
         if (launchViaApi(ctx, comp, displayId)) {
             Log.i(TAG, "launchOnDisplay[" + pkg + "] 走 API 成功 -> display " + displayId);
-            relaxCompat(pkg);
             return true;
         }
         String out = Caps.exec("am start --user 0 --display " + displayId
@@ -128,7 +132,6 @@ public final class RootOps {
                 && !out.contains("Abort");
         Log.i(TAG, "launchOnDisplay " + comp + " -> display " + displayId + " ok=" + ok
                 + " " + (out == null ? "" : out.trim()));
-        if (ok) relaxCompat(pkg);
         return ok;
     }
 

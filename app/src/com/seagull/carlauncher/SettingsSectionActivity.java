@@ -905,6 +905,8 @@ public class SettingsSectionActivity extends BaseActivity {
         actionRow("当前窗口档位", Caps.levelName(Caps.level(this)), null);
         actionRow("虚拟屏（L3）", Caps.canVirtualDisplay(this) ? "可用"
                 : "不可用 —— 需 uid=1000。root 侧方案：把本应用装进 /system/priv-app", null);
+        actionRow("LSPosed 模块自检", "不用抓日志：查模块有没有注入高德 / 网易云 / SystemUI",
+                v -> runLspCheck());
         note("立即校时与系统自动时间需要平台签名，公开版不可达，对应入口不显示。");
     }
 
@@ -939,6 +941,85 @@ public class SettingsSectionActivity extends BaseActivity {
         actionRow("安装包指纹", "签名证书 SHA-256", v -> showFingerprint());
         actionRow("检查更新", "对比 GitHub 上最新的 release", v -> checkUpdate());
         note("不做登录、会员、云端存档、分享码。备份/恢复只走本地文件导入导出。");
+    }
+
+    /* ------------------------- LSPosed 模块自检 ------------------------- */
+
+    /**
+     * 「模块到底有没有被注入」的自检（批次 Z）。用户侧不便抓 logcat，就把这件事搬到
+     * 应用内：root 跑一次 logcat 只看 SeagullLsp 标签，据此判断模块有没有进各目标进程，
+     * 并给出下一步该点哪里。前提：本次开机后至少打开过一次目标应用 —— 模块在它进程里
+     * 跑过才会有日志。
+     */
+    private void runLspCheck() {
+        toast("正在自检…");
+        new Thread(() -> {
+            final String rep = lspCheckReport();
+            runOnUiThread(() -> msgDialog("LSPosed 模块自检", rep));
+        }).start();
+    }
+
+    private String lspCheckReport() {
+        StringBuilder sb = new StringBuilder();
+
+        String mgr = Caps.exec("pm list packages 2>/dev/null | grep -iE 'lsposed|edxposed|xposed'");
+        boolean lspFound = mgr != null && !mgr.trim().isEmpty();
+        sb.append("① 框架\t").append(lspFound
+                        ? "已发现 " + mgr.trim().replace('\n', ' ')
+                        : "未发现 LSPosed / Xposed —— 模块不可能生效，先装框架")
+                .append('\n');
+
+        String conf = Caps.exec("find /data/adb/lspd -iname '*seagull*' 2>/dev/null | head -5");
+        sb.append("② 模块记录\t").append(conf != null && !conf.trim().isEmpty()
+                        ? conf.trim().replace('\n', ' ')
+                        : "未找到（模块可能没启用，或 LSPosed 没扫到本包）")
+                .append('\n');
+
+        String sw = Caps.exec("getprop persist.seagull.wf");
+        String ori = Caps.exec("getprop persist.seagull.wf.orientation");
+        sb.append("③ 空气开关\tpersist.seagull.wf=")
+                .append(sw == null || sw.trim().isEmpty() ? "(空=默认开)" : sw.trim())
+                .append("  wf.orientation=")
+                .append(ori == null || ori.trim().isEmpty() ? "(空=默认横屏)" : ori.trim())
+                .append('\n');
+
+        String log = Caps.exec("logcat -d -s SeagullLsp 2>/dev/null | tail -n 40");
+        String logTxt = log == null ? "" : log.trim();
+        sb.append("\n④ 模块日志（logcat -s SeagullLsp 末 40 行）\n");
+        sb.append(logTxt.isEmpty() ? "  <空 —— 一条模块日志都没有>" : logTxt).append('\n');
+
+        sb.append("\n⑤ 结论\n");
+        boolean hitAmap = logTxt.contains("handleLoadPackage: com.autonavi.minimap");
+        boolean hitNet = logTxt.contains("handleLoadPackage: com.netease.cloudmusic");
+        boolean hitSys = logTxt.contains("handleLoadPackage: com.android.systemui");
+        if (!lspFound) {
+            sb.append("  没检测到 LSPosed：先装框架（Zygisk / Riru 版），重启后再自检。\n");
+        } else if (logTxt.isEmpty()) {
+            sb.append("  模块没被注入任何进程。按顺序处理：\n");
+            sb.append("   1) LSPosed 管理器 → 模块 → 启用「海鸥桌面」；\n");
+            sb.append("   2) 进它的「作用域」，勾上：\n");
+            sb.append("      com.autonavi.minimap（高德）\n");
+            sb.append("      com.netease.cloudmusic 与 com.netease.cloudmusic.iot（网易云）\n");
+            sb.append("      com.android.systemui\n");
+            sb.append("   3) 保存后强杀高德 / 网易云再重开，回来再点一次自检。\n");
+            sb.append("  注：作用域是「启用那一刻」快照的，之前没勾的包要手动补勾。\n");
+        } else {
+            sb.append("  模块已加载。\n");
+            sb.append("   高德进程  : ").append(hitAmap
+                    ? "已注入 ✓" : "未注入 ✗（作用域没勾 com.autonavi.minimap）").append('\n');
+            sb.append("   网易云进程: ").append(hitNet
+                    ? "已注入 ✓" : "未注入 ✗（补勾 com.netease.cloudmusic[.iot]）").append('\n');
+            sb.append("   SystemUI : ").append(hitSys
+                    ? "已注入 ✓" : "未注入 ✗（补勾 com.android.systemui）").append('\n');
+            if (logTxt.contains("H1 失败") || logTxt.contains("H2 失败")
+                    || logTxt.contains("H3 失败")) {
+                sb.append("  日志里出现了「H1/H2/H3 失败」，按行尾异常信息处理。\n");
+            } else if (hitAmap) {
+                sb.append("  方向劫持就绪标志：日志里的「H2 hookOrientationOverride OK -> 0」（0=横屏）。\n");
+            }
+        }
+        sb.append("\n前提：本次开机后至少打开过一次目标应用，模块在它进程里跑过才有日志。\n");
+        return sb.toString();
     }
 
     /** 17.3 检查更新：打 GitHub releases/latest，跟本机 versionName 比。 */
