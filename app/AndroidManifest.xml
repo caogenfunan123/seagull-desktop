@@ -46,18 +46,20 @@
             xposedminversion 是「本模块要求框架提供的 Xposed API 最低版本」，
             必须 <= 框架的 XposedBridge.getXposedVersion()，否则 LSPosed 直接跳过加载
             （模块在管理器里可见、作用域也在，但任何进程都进不去 —— 静默失效）。
-            取 93：与参考实现 com.leting（netease-pip-adapter 清单）一致，
-            也低于 LSPosed 主流 build 的 API 版本，任何框架上都满足。
-            之前写 102 是误读：xphook 里那句 "CarWithX LSPosed API102 loaded"
-            只是它自己的日志字符串，不是清单里声明的最低版本。
-            真机上还出现过「源码已改、产物没重建」导致 APK 里仍是 82 的情况（批次 X 复盘）。
 
-            xposedscope 预填作用域，用户在管理器里可再增删。
+            取值 82（批次 Y 放宽，之前是 93）：判据是「越低越兼容」——
+            82 的可加载集合是 93 的**严格超集**：框架报 82 时只有 82 能过，
+            框架报 93/102 时两者都过。我们的编译期签名桩本来就是 api-82
+            （app/libs/xposed-api-82.jar），82 才是与桩一致的声明值。
+            参考实现 com.leting 写 93 能跑，只说明 93 够用，不说明 93 最优。
+
+            真机上还出现过「源码已改、产物没重建」导致 APK 里仍是旧值的情况
+            （批次 X 复盘）—— 所以本文件改动后必须重新构建，光看源码不算。
         -->
         <meta-data android:name="xposedmodule" android:value="true" />
         <meta-data android:name="xposeddescription"
             android:value="海鸥桌面：高德 PiP 尺寸缩放(60%) + 目标应用 H1/H2/H3 窗口语义 + 网易云跨屏 displayId 注入" />
-        <meta-data android:name="xposedminversion" android:value="93" />
+        <meta-data android:name="xposedminversion" android:value="82" />
         <meta-data android:name="xposedscope" android:resource="@array/xposed_scope" />
 
         <activity

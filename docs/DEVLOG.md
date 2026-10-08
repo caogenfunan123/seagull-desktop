@@ -12,6 +12,77 @@
 
 ---
 
+## 批次 Y — 用户三连报"还是不行"：一个是构建产物问题，一个是模块被自己吞了
+
+**目标**：用户反馈高德画中画仍竖版黑边、网易云点一下仍跳主屏、并且明确说"模块像没
+生效一样"。三条同时成立，指向的不是某条 hook 写错，而是**模块根本没有在目标进程
+里跑起来**（或跑的是旧包）。本批只做能坐实的两件事，不再盲加 hook。
+
+### ① 构建产物：版本号写死 1.0 → 用户可能一直装着旧包
+
+`app/build.sh` 里 `aapt2 link --version-code 1 --version-name 1.0` 是硬编码的，带来两个后果：
+
+- GitHub release tag 由 versionName 拼出（CI `TAG="v$VER"`），**永远都是 `v1.0`**；
+  应用内「检查更新」是拿 `releases/latest` 的 tag 去掉 `v` 跟本机 versionName 比
+  （见 `SettingsSectionActivity.checkUpdate`），于是**恒等于 → 永远回「已是最新」**。
+- 用户侧看到的现象就是：仓库明明推了新批次、CI 也跑了，但"检查更新"说不用更新，
+  他手里那个包还是批次 V 之前的 —— 之后每批模块改动都"像没生效一样"。
+  批次 X 也记过一次"源码已改、产物没重建"，同源。
+
+**修复**：`build.sh` 每次构建现算版本号 ——
+`versionName = 1.0.<git 短哈希>`、`versionCode = unix 秒`。
+短哈希让人眼能核对"手上这包是不是当前提交"（版本信息页会显示），
+tag 也随之每次不同，`releases/latest` 指向最新包这条承诺不变。
+
+### ② 模块加载：一个 try 包住三段 hook，H1 抛一次就把 H2 全吞了
+
+`XposedEntry.handleLoadPackage` 原来把 A(SystemUI)/B(H1~H3)/C(网易云) 全塞在
+**同一个 try/catch** 里。只要 H1 在某个 ROM 上抛一次（`findAndHookMethod` 签名不匹配
+就会抛），后面的 **H2 方向劫持（高德铺满画布全靠它）和 H3 一条都装不上**，
+而且只留一行 `hook setup failed`，外观上就是"模块像没生效"。
+
+**修复**：拆成三段各自 try/catch，每段失败单独记日志（`A 段失败` / `H1 失败` /
+`H2 失败` …），互不牵连。
+
+### ③ 日志第一条无条件打，且移到开关/白名单之前
+
+原来是白名单通过后才 `log("已挂载 …")`。作用域勾错时日志里**连一条来访记录都没有**，
+排查时分不清"LSPosed 没注进来"和"注进来了但被开关/名单挡掉"。
+现在 `handleLoadPackage` 第一行就是 `log("handleLoadPackage: " + pkg)`。
+
+### ④ 放宽 xposedminversion：93 → 82
+
+判据是"越低越兼容"：LSPosed 的过滤条件是 `xposedminversion <= 框架 getXposedVersion()`，
+所以 82 的可加载集合是 93 的**严格超集** —— 框架报 82 时只有 82 能过，报 93/102 时两者都过。
+我们的编译期签名桩本来就是 api-82（`libs/xposed-api-82.jar`），82 才与桩一致。
+参考实现 com.leting 写 93 能跑只说明 93 够用，不说明 93 最优。
+
+### 复盘
+
+- 做错：连续几批都在"加 hook / 改 hook"，但**没有一条证据说明模块被加载过**；
+  用户在设备上的体感是"没反应"，最可能的解释一直是链路而不是逻辑。
+  排查顺序应当是：产物是不是最新 → 模块有没有注进来 → hook 有没有抛 → 才轮到 hook 逻辑。
+- 判据固化：`logcat | grep SeagullLsp` 里**必须有** `handleLoadPackage: <包名>`。
+  没有它，后面所有 hook 讨论都是空的。
+- 保留的结论（未改）：本项目画中画是 VirtualDisplay + SurfaceView（`PipBoard`），
+  不是系统原生 PiP。所以 A 段（hook SystemUI `PipBoundsAlgorithm`）对本项目**不生效**，
+  真正决定高德铺满的只有目标进程里的 H2。A 段暂时留着（若将来走系统 PiP 才有用），
+  不再把它当成主要机制。
+
+### 验证
+
+- `bash -n app/build.sh`；本地无 aapt2/javac（无 SDK），类型检查走 CI。
+- 真机验收（P2-19 已更新口径）：装**版本号带短哈希**的新包 → 高德强杀重启 →
+  `logcat -s SeagullLsp` 先要看到 `handleLoadPackage: com.autonavi.minimap`，
+  再看 `H2 hookOrientationOverride OK`。
+
+### 遗留
+
+- 若 `handleLoadPackage` 一条都不出现：问题在 LSPosed 侧（模块未启用 / 作用域未勾 /
+  框架版本低于 82），与本仓库代码无关，只能由用户在管理器里核对。
+- 网易云的 displayId 注入依赖目标 Activity 启动时所在 displayId > 0；
+  若应用实际落在主屏（部署失败），这条也不触发 —— 先看 `MirrorSlot.describe()`。
+
 ## 批次 X — LSPosed 模块不生效的复盘：模块根本没被加载 + 两条死 hook
 
 **目标**：用户报「还是不行」（高德画中画仍竖版黑边、网易云点击跳主屏）。

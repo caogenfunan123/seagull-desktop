@@ -106,36 +106,55 @@ public class XposedEntry implements IXposedHookLoadPackage {
     @Override
     public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lpp) {
         String pkg = lpp.packageName;
+        // 第一行无条件打，且放在 enabled()/白名单之前：这是「模块到底有没有被 LSPosed
+        // 注进来」的唯一判据。之前放在后面，作用域勾错时日志里连一条来访记录都没有，
+        // 排查时分不清「没加载」和「加载了但被开关/名单挡掉」。
+        log("handleLoadPackage: " + pkg);
         if (HOST_PACKAGE.equals(pkg)) return;   // 桌面自己不要被自己的 hook 波及
         if (!enabled()) {
             log("disabled by " + PROP_ENABLE + ", skip " + pkg);
             return;
         }
 
-        try {
-            // ---- A) SystemUI：高德 PiP 尺寸缩放 ----
-            if (SYSTEMUI_PACKAGE.equals(pkg)) {
+        // 下面三段各自 try/catch，绝不能再用一个 try 把 A/B/C 全包住：
+        // 只要 H1 在某个 ROM 上抛一次，后面的 H2（方向劫持——高德铺满全靠它）
+        // 和 H3 就一条都装不上，表现正是「模块像没生效一样」。这是批次 Y 修的主问题。
+        if (SYSTEMUI_PACKAGE.equals(pkg)) {
+            try {
                 log("已挂载 SystemUI → AmapPip 尺寸缩放 " + TARGET_SIZE_PERCENT);
                 hookAmapPip(lpp.classLoader);
-                return;
+            } catch (Throwable t) {
+                log("A 段(SystemUI)失败: " + t);
             }
+            return;
+        }
 
-            // ---- C) 网易云：跨屏 displayId 注入 ----
-            if (isNetease(pkg)) {
+        if (isNetease(pkg)) {
+            try {
                 log("已挂载 " + pkg + " → 注入 setLaunchDisplayId");
                 hookNeteaseDisplayId(lpp.classLoader);
-                // 网易云同样需要 H1~H3 的窗口语义配合，继续往下走
+            } catch (Throwable t) {
+                log("C 段(网易云)失败: " + t);
             }
+            // 网易云同样需要 H1~H3 的窗口语义配合，继续往下走
+        }
 
-            // ---- B) 目标应用：H1~H3 窗口语义 ----
-            if (!hit(pkg)) return;
-            log("已挂载 " + pkg + " → H1/H2/H3 窗口语义");
+        if (!hit(pkg)) return;
+        log("已挂载 " + pkg + " → H1/H2/H3 窗口语义");
+        try {
             hookMultiWindowPretence();
+        } catch (Throwable t) {
+            log("H1 失败: " + t);
+        }
+        try {
             hookOrientationOverride();
+        } catch (Throwable t) {
+            log("H2 失败: " + t);
+        }
+        try {
             hookPictureInPicture();
         } catch (Throwable t) {
-            // 某个 ROM 上方法签名不同，也不该连带让目标 App 崩
-            log("hook setup failed for " + pkg + ": " + t);
+            log("H3 失败: " + t);
         }
     }
 

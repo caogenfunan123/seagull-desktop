@@ -18,6 +18,19 @@ export PATH="$BT:$JAVA_HOME/bin:$PATH"
 MIN_API=29
 TARGET_API=33
 
+# 版本号必须每次构建都不同（批次 Y）。之前写死 --version-code 1 --version-name 1.0：
+#   · GitHub release tag 恒为 v1.0 → 「检查更新」拿 1.0 跟本机 1.0 比，永远回「已是最新」
+#   · 用户因此长期停在旧包上，之后每批 LSPosed 模块改动都"像没生效一样"
+# 现在：versionName = 1.0.<git 短哈希>（人眼可核对是不是当前提交），
+#       versionCode  = unix 秒（单调递增，2038 年前不溢出 int）。
+# 不在 git 仓库里时退回 1.0 / 1，别让构建挂掉。
+VERSION_NAME="1.0"
+if git -C "$P" rev-parse --short HEAD >/dev/null 2>&1; then
+  VERSION_NAME="1.0.$(git -C "$P" rev-parse --short HEAD)"
+fi
+VERSION_CODE="$(date +%s)"
+echo "版本：$VERSION_NAME ($VERSION_CODE)"
+
 # 统一签名密钥（批次 L 起，详见 docs/SIGNING.md）：
 #   keystore/seagull-release.keystore   唯一签名文件，本地与 CI 同一把
 #   密码优先级：SEAGULL_KS_PASS 环境变量 > keystore/seagull-release.properties > 兜底默认值
@@ -59,7 +72,7 @@ aapt2 link -o "$OUT/base-$STAMP.apk" \
   --java "$GEN" \
   --min-sdk-version $MIN_API \
   --target-sdk-version $TARGET_API \
-  --version-code 1 --version-name 1.0 \
+  --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" \
   --auto-add-overlay
 
 echo "== 3/7 javac =="
